@@ -1,10 +1,15 @@
 {
-  "name": "expert-engine",
+  "name": "tap-in",
+  "private": true,
   "version": "1.0.0",
-  "type": "module",
   "scripts": {
-    "start": "node backend/server.js",
-    "backend": "npm run start --prefix backend",
-    "frontend": "npm run dev --prefix frontend"
+    "dev": "concurrently \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
+    "backend": "npm run dev --prefix backend",
+    "frontend": "npm run dev --prefix frontend",
+    "build": "npm run build --prefix frontend",
+    "start": "npm run start --prefix backend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.1"
   }
 }
