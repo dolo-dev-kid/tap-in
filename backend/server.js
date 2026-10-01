@@ -1,3 +1,4 @@
+require("dotenv").config();
 const express = require("express");
 const http = require("http");
 const cors = require("cors");
@@ -19,14 +20,28 @@ const io = new Server(server, {
   }
 });
 
-mongoose.connect("mongodb://127.0.0.1:27017/expertengine", {
+// MongoDB Connection
+const MONGODB_URI = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/expertengine";
+mongoose.connect(MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
+}).then(() => {
+  console.log("✅ MongoDB connected");
+}).catch((err) => {
+  console.error("❌ MongoDB connection error:", err);
 });
 
+// User Schema
 const UserSchema = new mongoose.Schema({
-  username: String,
-  password: String,
+  username: {
+    type: String,
+    required: true,
+    unique: true
+  },
+  password: {
+    type: String,
+    required: true
+  },
   bio: {
     type: String,
     default: ""
@@ -42,26 +57,34 @@ const UserSchema = new mongoose.Schema({
   servers: {
     type: [String],
     default: []
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
   }
 });
 
 const User = mongoose.model("User", UserSchema);
 
-const JWT_SECRET = "CHANGE_THIS_SECRET";
-
+const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_THIS_SECRET";
 const rooms = {};
 
+// Routes
 app.get("/", (req, res) => {
-  res.send("Tap-In Backend Running");
+  res.send("✨ Tap-In Backend Running");
 });
 
 app.post("/auth/register", async (req, res) => {
   try {
     const { username, password } = req.body;
 
-    const existing = await User.findOne({
-      username
-    });
+    if (!username || !password) {
+      return res.status(400).json({
+        error: "Username and password required"
+      });
+    }
+
+    const existing = await User.findOne({ username });
 
     if (existing) {
       return res.status(400).json({
@@ -69,10 +92,7 @@ app.post("/auth/register", async (req, res) => {
       });
     }
 
-    const hashedPassword = await bcrypt.hash(
-      password,
-      10
-    );
+    const hashedPassword = await bcrypt.hash(password, 10);
 
     const user = await User.create({
       username,
@@ -94,9 +114,13 @@ app.post("/auth/login", async (req, res) => {
   try {
     const { username, password } = req.body;
 
-    const user = await User.findOne({
-      username
-    });
+    if (!username || !password) {
+      return res.status(400).json({
+        error: "Username and password required"
+      });
+    }
+
+    const user = await User.findOne({ username });
 
     if (!user) {
       return res.status(400).json({
@@ -104,10 +128,7 @@ app.post("/auth/login", async (req, res) => {
       });
     }
 
-    const match = await bcrypt.compare(
-      password,
-      user.password
-    );
+    const match = await bcrypt.compare(password, user.password);
 
     if (!match) {
       return res.status(400).json({
@@ -145,10 +166,7 @@ app.post("/auth/login", async (req, res) => {
 
 app.get("/users/:id", async (req, res) => {
   try {
-    const user = await User.findById(
-      req.params.id
-    );
-
+    const user = await User.findById(req.params.id);
     res.json(user);
   } catch (err) {
     res.status(500).json({
@@ -159,12 +177,9 @@ app.get("/users/:id", async (req, res) => {
 
 app.post("/friends/add", async (req, res) => {
   try {
-    const { userId, friendName } =
-      req.body;
+    const { userId, friendName } = req.body;
 
-    const user = await User.findById(
-      userId
-    );
+    const user = await User.findById(userId);
 
     if (!user.friends.includes(friendName)) {
       user.friends.push(friendName);
@@ -184,15 +199,11 @@ app.post("/friends/add", async (req, res) => {
 
 app.post("/servers/create", async (req, res) => {
   try {
-    const { userId, serverName } =
-      req.body;
+    const { userId, serverName } = req.body;
 
-    const user = await User.findById(
-      userId
-    );
+    const user = await User.findById(userId);
 
     user.servers.push(serverName);
-
     await user.save();
 
     res.json({
@@ -206,63 +217,47 @@ app.post("/servers/create", async (req, res) => {
   }
 });
 
+// Socket.IO Events
 io.on("connection", (socket) => {
-  console.log(
-    "User connected:",
-    socket.id
-  );
+  console.log("✅ User connected:", socket.id);
 
-  socket.on("join-room", roomId => {
+  socket.on("join-room", (roomId) => {
     if (!rooms[roomId]) {
       rooms[roomId] = [];
     }
 
     rooms[roomId].push(socket.id);
-
     socket.join(roomId);
 
-    socket.to(roomId).emit(
-      "user-joined",
-      socket.id
-    );
-
+    socket.to(roomId).emit("user-joined", socket.id);
     io.to(socket.id).emit(
       "existing-users",
-      rooms[roomId].filter(
-        id => id !== socket.id
-      )
+      rooms[roomId].filter((id) => id !== socket.id)
     );
   });
 
-  socket.on("offer", data => {
+  socket.on("offer", (data) => {
     io.to(data.to).emit("offer", {
       sdp: data.sdp,
       from: socket.id
     });
   });
 
-  socket.on("answer", data => {
+  socket.on("answer", (data) => {
     io.to(data.to).emit("answer", {
       sdp: data.sdp,
       from: socket.id
     });
   });
 
-  socket.on(
-    "ice-candidate",
-    data => {
-      io.to(data.to).emit(
-        "ice-candidate",
-        {
-          candidate:
-            data.candidate,
-          from: socket.id
-        }
-      );
-    }
-  );
+  socket.on("ice-candidate", (data) => {
+    io.to(data.to).emit("ice-candidate", {
+      candidate: data.candidate,
+      from: socket.id
+    });
+  });
 
-  socket.on("chat-message", data => {
+  socket.on("chat-message", (data) => {
     io.to(data.room).emit("chat-message", {
       message: data.message,
       from: socket.id,
@@ -270,7 +265,7 @@ io.on("connection", (socket) => {
     });
   });
 
-  socket.on("stream-data", data => {
+  socket.on("stream-data", (data) => {
     socket.to(data.room).emit("stream-data", {
       chunk: data.chunk,
       from: socket.id
@@ -278,10 +273,10 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    console.log("user disconnected:", socket.id);
+    console.log("❌ User disconnected:", socket.id);
 
     for (const roomId in rooms) {
-      rooms[roomId] = rooms[roomId].filter(id => id !== socket.id);
+      rooms[roomId] = rooms[roomId].filter((id) => id !== socket.id);
       socket.to(roomId).emit("user-left", socket.id);
     }
   });
@@ -289,5 +284,5 @@ io.on("connection", (socket) => {
 
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
-  console.log(`Backend running on http://localhost:${PORT}`);
+  console.log(`🚀 Backend running on http://localhost:${PORT}`);
 });
