@@ -52,7 +52,7 @@ const JWT_SECRET = "CHANGE_THIS_SECRET";
 const rooms = {};
 
 app.get("/", (req, res) => {
-  res.send("Expert Engine Backend Running");
+  res.send("Tap-In Backend Running");
 });
 
 app.post("/auth/register", async (req, res) => {
@@ -262,4 +262,32 @@ io.on("connection", (socket) => {
     }
   );
 
-  socket.on
+  socket.on("chat-message", data => {
+    io.to(data.room).emit("chat-message", {
+      message: data.message,
+      from: socket.id,
+      timestamp: new Date()
+    });
+  });
+
+  socket.on("stream-data", data => {
+    socket.to(data.room).emit("stream-data", {
+      chunk: data.chunk,
+      from: socket.id
+    });
+  });
+
+  socket.on("disconnect", () => {
+    console.log("user disconnected:", socket.id);
+
+    for (const roomId in rooms) {
+      rooms[roomId] = rooms[roomId].filter(id => id !== socket.id);
+      socket.to(roomId).emit("user-left", socket.id);
+    }
+  });
+});
+
+const PORT = process.env.PORT || 3001;
+server.listen(PORT, () => {
+  console.log(`Backend running on http://localhost:${PORT}`);
+});

@@ -1,132 +1,98 @@
-
 # Tap-In
 
-Tap-In is a next-generation social platform designed to help people connect in real time through messaging, voice, video, and live experiences.
+Social media app with peer-to-peer calling, video chat, group chat, live stream and group stream.
 
-## 🚀 Features
+## Project Structure
 
-### 💬 Real-Time Messaging
-- One-on-one chat
-- Group conversations
-- Media sharing
-- Message notifications
+```
+tap-in/
+├── backend/
+│   ├── models/
+│   │   └── User.js
+│   ├── .env
+│   ├── .env.example
+│   ├── auth.js
+│   ├── package.json
+│   └── server.js
+├── frontend/
+│   ├── src/
+│   │   ├── api/
+│   │   │   └── axios.js
+│   │   ├── components/
+│   │   ├── pages/
+│   │   ├── router/
+│   │   │   └── AppRouter.jsx
+│   │   ├── styles/
+│   │   │   └── globals.css
+│   │   ├── App.jsx
+│   │   └── main.tsx
+│   ├── .env
+│   ├── .env.example
+│   ├── index.html
+│   ├── package.json
+│   └── vite.config.ts
+├── package.json
+└── README.md
+```
 
-### 📞 Peer-to-Peer Calling
-- High-quality voice calls
-- Direct user-to-user connections
-- Low-latency communication
+## Setup
 
-### 🎥 Video Chat
-- Private video calls
-- Face-to-face communication from anywhere
-- Cross-device compatibility
+### Prerequisites
+- Node.js (v16+)
+- MongoDB
 
-### 👥 Group Chat
-- Create and manage communities
-- Topic-based discussions
-- Group media sharing
-
-### 🔴 Live Streaming
-- Broadcast live to followers
-- Real-time audience engagement
-- Stream reactions and interactions
-
-### 🌐 Group Streaming
-- Watch content together
-- Shared viewing experiences
-- Community-driven events
-
-### ✨ Bonus Features
-- User profiles
-- Friend and follower system
-- Activity feed
-- Custom notifications
-- Future AI-powered social tools
-
----
-
-## 🎯 Mission
-
-Tap-In aims to bring communication, entertainment, and community building together in one platform. Instead of switching between multiple apps for chat, calls, and streaming, users can stay connected through a single experience.
-
----
-
-## 🛠 Tech Stack
-
-This project may include:
-
-- Frontend: React + TypeScript
-- Backend: Node.js
-- Database: MongoDB / PostgreSQL
-- Real-Time Communication: WebRTC
-- Real-Time Events: Socket.IO
-- Authentication: JWT / OAuth
-- Live Streaming: WebRTC or RTMP-based services
-
----
-
-## 📦 Installation
+### Backend Setup
 
 ```bash
-git clone https://github.com/dolo-dev-kid/tap-in.git
-cd tap-in
+cd backend
 npm install
 npm run dev
 ```
 
----
+Backend runs on `http://localhost:3001`
 
-## 📂 Project Structure
+### Frontend Setup
 
-```text
-src/
-├── components/
-├── pages/
-├── hooks/
-├── services/
-├── context/
-├── assets/
-└── utils/
+```bash
+cd frontend
+npm install
+npm run dev
 ```
 
----
+Frontend runs on `http://localhost:5173`
 
-## 🔐 Core Goals
+## Running Both
 
-- Fast and reliable communication
-- Secure user authentication
-- Scalable live streaming
-- Mobile-friendly experience
-- Community-first design
+From root directory:
 
----
+```bash
+npm run backend  # Terminal 1
+npm run frontend # Terminal 2
+```
 
-## 🚧 Development Status
+## Features
 
-Tap-In is currently under active development. Features, designs, and architecture may change as the platform evolves.
+- User authentication (Register/Login)
+- Peer-to-peer video calling (WebRTC)
+- Group chat
+- Live streaming
+- Friend management
+- Server/channel management
+- Real-time communication via Socket.io
 
----
+## Tech Stack
 
-## 🤝 Contributing
+### Frontend
+- React 18
+- Vite
+- React Router
+- Axios
+- Socket.io-client
+- Zustand (state management)
 
-Contributions, improvements, and feedback are welcome.
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Open a pull request
-
----
-
-## 📜 License
-
-This project is licensed under the MIT License.
-
----
-
-## 👨‍💻 Author
-
-Developed by **dolo-dev-kid**.
-
-Connect, stream, chat, and Tap-In.
-This version reads like a startup/social-platform project and will look much more polished on GitHub than the current one-line description.
+### Backend
+- Express.js
+- Socket.io
+- MongoDB + Mongoose
+- JWT Authentication
+- Bcrypt
