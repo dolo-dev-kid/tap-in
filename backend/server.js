@@ -6,65 +6,50 @@ const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { Server } = require("socket.io");
+const User = require("./models/User");
 
 const app = express();
 const server = http.createServer(app);
 
-app.use(cors());
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+app.use(cors({ origin: [FRONTEND_URL, "http://localhost:5173", "capacitor://localhost"], credentials: true }));
 app.use(express.json());
 
 const io = new Server(server, {
   cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
+    origin: [FRONTEND_URL, "http://localhost:5173", "capacitor://localhost"],
+    methods: ["GET", "POST"],
+    credentials: true
   }
 });
 
-// MongoDB Connection
-require("dotenv").config();
-const mongoose = require("mongoose");
+// MongoDB Connection — do not crash the server if the DB is down / not configured.
+// Auth routes return 503 with a clear message until MongoDB is connected.
+let dbConnected = false;
+const MONGODB_URI = process.env.MONGODB_URI;
+if (!MONGODB_URI) {
+  console.warn("⚠️  MONGODB_URI is not set — server will start, but auth/friends/servers need MongoDB. Copy backend/.env.example to backend/.env and set it.");
+} else {
+  mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 5000 })
+    .then(() => { dbConnected = true; console.log("✅ MongoDB Connected"); })
+    .catch((err) => console.error("❌ MongoDB Error:", err.message));
+}
+mongoose.connection.on("connected", () => { dbConnected = true; });
+mongoose.connection.on("disconnected", () => { dbConnected = false; });
 
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log("✅ MongoDB Connected"))
-  .catch((err) => console.error("❌ MongoDB Error:", err));
-});
-
-// User Schema
-const UserSchema = new mongoose.Schema({
-  username: {
-    type: String,
-    required: true,
-    unique: true
-  },
-  password: {
-    type: String,
-    required: true
-  },
-  bio: {
-    type: String,
-    default: ""
-  },
-  avatar: {
-    type: String,
-    default: ""
-  },
-  friends: {
-    type: [String],
-    default: []
-  },
-  servers: {
-    type: [String],
-    default: []
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
+function requireDb(req, res, next) {
+  if (!dbConnected) {
+    return res.status(503).json({ error: "Database not connected. Set MONGODB_URI in backend/.env and restart the backend." });
   }
-});
+  next();
+}
 
-const User = mongoose.model("User", UserSchema);
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.warn("⚠️  JWT_SECRET is not set — set a long random secret in backend/.env. Using a dev-only fallback; do NOT use in production.");
+}
+const jwtSecret = JWT_SECRET || "dev-only-change-me";
 
-const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_THIS_SECRET";
 const rooms = {};
 
 // Routes
@@ -72,7 +57,11 @@ app.get("/", (req, res) => {
   res.send("✨ Tap-In Backend Running");
 });
 
-app.post("/auth/register", async (req, res) => {
+app.get("/health", (req, res) => {
+  res.json({ ok: true, db: dbConnected ? "connected" : "disconnected", uptime: process.uptime() });
+});
+
+app.post("/auth/register", requireDb, async (req, res) => {
   try {
     const { username, password } = req.body;
 
@@ -108,7 +97,7 @@ app.post("/auth/register", async (req, res) => {
   }
 });
 
-app.post("/auth/login", async (req, res) => {
+app.post("/auth/login", requireDb, async (req, res) => {
   try {
     const { username, password } = req.body;
 
@@ -139,7 +128,7 @@ app.post("/auth/login", async (req, res) => {
         id: user._id,
         username: user.username
       },
-      JWT_SECRET,
+      jwtSecret,
       {
         expiresIn: "30d"
       }
@@ -162,10 +151,11 @@ app.post("/auth/login", async (req, res) => {
   }
 });
 
-app.get("/users/:id", async (req, res) => {
+app.get("/users/:id", requireDb, async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
-    res.json(user);
+    if (!user) return res.status(404).json({ error: "User not found" });
+    res.json({ id: user._id, username: user.username, bio: user.bio, avatar: user.avatar, friends: user.friends, servers: user.servers });
   } catch (err) {
     res.status(500).json({
       error: err.message
@@ -173,11 +163,12 @@ app.get("/users/:id", async (req, res) => {
   }
 });
 
-app.post("/friends/add", async (req, res) => {
+app.post("/friends/add", requireDb, async (req, res) => {
   try {
     const { userId, friendName } = req.body;
 
     const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ error: "User not found" });
 
     if (!user.friends.includes(friendName)) {
       user.friends.push(friendName);
@@ -195,11 +186,12 @@ app.post("/friends/add", async (req, res) => {
   }
 });
 
-app.post("/servers/create", async (req, res) => {
+app.post("/servers/create", requireDb, async (req, res) => {
   try {
     const { userId, serverName } = req.body;
 
     const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ error: "User not found" });
 
     user.servers.push(serverName);
     await user.save();

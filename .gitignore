@@ -9,6 +9,7 @@ node_modules/
 # Production
 /dist
 /build
+frontend/dist/
 
 # Misc
 .DS_Store
@@ -39,3 +40,7 @@ App.jsx
 server.js
 "Axios Setup"
 "Basic Router"
+# Android / Capacitor (Play Store build)
+android/
+*.keystore
+*.jks

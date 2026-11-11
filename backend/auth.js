@@ -4,7 +4,7 @@ const bcrypt = require("bcrypt");
 const User = require("./models/User");
 
 const router = express.Router();
-const SECRET = "YOUR_SECRET_KEY";
+const SECRET = process.env.JWT_SECRET || "dev-only-change-me";
 
 router.post("/register", async (req, res) => {
   const { username, password } = req.body;
