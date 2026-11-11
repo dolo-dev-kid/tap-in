@@ -1,0 +1,23 @@
+# Render Blueprint for Tap In backend
+# https://render.com/docs/blueprint-spec
+# This pins the deploy to the backend folder with plain Node commands —
+# no nodemon (dev-only, not installed in production) and no Deno.
+# After pushing, in Render: New > Blueprint, pick dolo-dev-kid/tap-in,
+# or if the existing tap-in service was created manually, set its
+# Root Directory to "backend", Build Command to "npm install",
+# Start Command to "node server.js", and add the env vars below.
+services:
+  - type: web
+    name: tap-in-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Set these in the Render dashboard (never commit real values):
+      # MONGODB_URI=mongodb+srv://tapin_app_user:<password>@tap-in.vgmavh6.mongodb.net/tap-in
+      # JWT_SECRET=<a long random secret, different from the leaked one>
+      # FRONTEND_URL=https://<your-frontend-url>
