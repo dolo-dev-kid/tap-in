@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import io from "socket.io-client";
 
-const socket = io("http://localhost:3001");
+const socket = io(import.meta.env.VITE_API_URL || "http://localhost:3001");
 
 export default function VideoChat() {
   const [room, setRoom] = useState("global");
