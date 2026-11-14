@@ -102,7 +102,12 @@ deploy uses its own env var, verified read-only as
 ## Commit
 
 - Commit: see `git log` on `main` — "Fix Tap In tabs + wire up login/signup (no DB needed)"
-  (pushed to `dolo-dev-kid/tap-in`, branch `main`)
+  (pushed to `dolo-dev-kid/tap-in`, branch `main`, commit `86fdeb2`)
+- **Deploy verified live:** both Render services deployed commit `86fdeb2`
+  and report `live`. Live bundle (`index-ftpLa58z.js`) contains the
+  Login/Register pages and the STUN URL, Imgur is gone (0 occurrences).
+  Live backend `/health` still `{"ok":true,"db":"disconnected"}` (expected)
+  and login returns the new friendly 503.
 - Files changed: `frontend/src/App.jsx`, `main.tsx`, `router/AppRouter.jsx`,
   `components/{Sidebar,Settings,Profile,VideoChat,ChatPanel,Friends,Servers,
   Feed,Landing,StreamDashboard,Overlay}.jsx`, `pages/{Login,Register}.jsx`,
