@@ -39,7 +39,7 @@ mongoose.connection.on("disconnected", () => { dbConnected = false; });
 
 function requireDb(req, res, next) {
   if (!dbConnected) {
-    return res.status(503).json({ error: "Database not connected. Set MONGODB_URI in backend/.env and restart the backend." });
+    return res.status(503).json({ error: "Tap In's database is still being connected — logins and sign-ups will work once it is up. Please try again soon." });
   }
   next();
 }

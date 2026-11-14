@@ -9,13 +9,14 @@ import Friends from "./components/Friends";
 import Servers from "./components/Servers";
 import StreamDashboard from "./components/StreamDashboard";
 import Overlay from "./components/Overlay";
+import Settings from "./components/Settings";
 
 export default function App() {
   const [page, setPage] = useState("landing");
 
   return (
     <div style={{ display: "flex", height: "100vh", background: "#0f0f0f" }}>
-      <Sidebar onNavigate={setPage} />
+      <Sidebar onNavigate={setPage} page={page} />
 
       <div style={{ flex: 1, overflowY: "auto" }}>
         {page === "landing" && <Landing />}
@@ -23,10 +24,11 @@ export default function App() {
         {page === "video" && <VideoChat />}
         {page === "chat" && <ChatPanel />}
         {page === "profile" && <Profile />}
-        {page === "friends" && <Friends />}
+        {page === "friends" && <Friends onNavigate={setPage} />}
         {page === "servers" && <Servers />}
-        {page === "dashboard" && <StreamDashboard />}
+        {page === "dashboard" && <StreamDashboard onNavigate={setPage} />}
         {page === "overlay" && <Overlay />}
+        {page === "settings" && <Settings />}
       </div>
     </div>
   );

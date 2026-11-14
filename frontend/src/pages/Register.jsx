@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import axiosInstance from "../api/axios";
 
 export default function Register() {
@@ -7,6 +7,16 @@ export default function Register() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [dbDown, setDbDown] = useState(false);
+
+  // If the database is not connected yet, say so up front instead of
+  // letting the user fill in a form that cannot work.
+  useEffect(() => {
+    axiosInstance
+      .get("/health")
+      .then((res) => setDbDown(res.data?.db !== "connected"))
+      .catch(() => setDbDown(false));
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -29,7 +39,12 @@ export default function Register() {
         window.location.href = "/login";
       }
     } catch (err) {
-      setError(err.response?.data?.error || "Registration failed");
+      const serverError = err.response?.data?.error || "Registration failed";
+      setError(
+        serverError.includes("Database not connected")
+          ? "Tap In's database is still being connected — sign-ups will work once it is up. Please try again soon."
+          : serverError
+      );
     } finally {
       setLoading(false);
     }
@@ -55,6 +70,23 @@ export default function Register() {
         }}
       >
         <h1 style={{ marginBottom: 30 }}>Register for Tap-In</h1>
+
+        {dbDown && (
+          <p
+            style={{
+              background: "#3a2f00",
+              color: "#ffce54",
+              padding: 12,
+              borderRadius: 8,
+              marginBottom: 15,
+              fontSize: 14
+            }}
+          >
+            Heads up: sign-ups are paused while Tap In's database is being
+            connected. You can still look around the app — your account will
+            work once the database is up.
+          </p>
+        )}
 
         <form onSubmit={handleSubmit}>
           <input
@@ -129,6 +161,9 @@ export default function Register() {
 
         <p style={{ marginTop: 20, textAlign: "center" }}>
           Already have an account? <a href="/login" style={{ color: "#00eaff" }}>Login</a>
+        </p>
+        <p style={{ marginTop: 10, textAlign: "center" }}>
+          <a href="/" style={{ color: "#aaa" }}>← Back to Tap-In</a>
         </p>
       </div>
     </div>

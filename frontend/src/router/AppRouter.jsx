@@ -11,6 +11,8 @@ export default function AppRouter() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        {/* Unknown paths land on the app instead of a blank page. */}
+        <Route path="*" element={<Dashboard />} />
       </Routes>
     </BrowserRouter>
   );
