@@ -151,6 +151,14 @@ export default function ChatPanel() {
     });
     loadRooms();
     loadPresence();
+    // DM requested from the Friends tab: Friends stores the friend's
+    // name in localStorage ("tapin_dm_username") and navigates here.
+    // Open that chat once, then clear it so it never re-fires.
+    const pendingDm = localStorage.getItem("tapin_dm_username");
+    if (pendingDm) {
+      localStorage.removeItem("tapin_dm_username");
+      createDm(pendingDm);
+    }
     return () => {
       privSocket.disconnect();
       privSocketRef.current = null;
@@ -197,8 +205,13 @@ export default function ChatPanel() {
     }
   };
 
-  const createDm = async () => {
-    const name = dmUsername.trim();
+  // createDm(name) — start (or open) a 1-to-1 chat. The name can be
+  // passed in directly: the Find list's Message button used to do
+  // setDmUsername(u.username) then call createDm() on a timer, but
+  // createDm read the OLD dmUsername state, so with an empty input
+  // it silently did nothing at all. Passing the name in fixes that.
+  const createDm = async (nameOverride) => {
+    const name = (typeof nameOverride === "string" ? nameOverride : dmUsername).trim();
     if (!name) return;
     setPrivError("");
     try {
@@ -432,10 +445,7 @@ export default function ChatPanel() {
                   <div key={u.id} style={{ marginTop: 8, display: "flex", gap: 10, alignItems: "center" }}>
                     <span>{presence[String(u.id)]?.online ? "🟢" : "⚫"} {u.username}</span>
                     <button
-                      onClick={() => {
-                        setDmUsername(u.username);
-                        setTimeout(createDm, 0);
-                      }}
+                      onClick={() => createDm(u.username)}
                       style={btnSecondary}
                     >
                       Message

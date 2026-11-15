@@ -273,20 +273,42 @@ export default function Friends({ onNavigate }) {
                 </span>
               )}
             </span>
-            <button
-              onClick={() => onNavigate && onNavigate("video")}
-              title="Open a video room to call"
-              style={{
-                padding: "8px 16px",
-                borderRadius: 6,
-                background: "#00eaff",
-                border: "none",
-                cursor: "pointer",
-                color: "black"
-              }}
-            >
-              Call
-            </button>
+            <span>
+              <button
+                onClick={() => {
+                  // Hand the friend's name to the Messages tab, which
+                  // opens a private chat with them when it mounts.
+                  localStorage.setItem("tapin_dm_username", friend);
+                  onNavigate && onNavigate("chat");
+                }}
+                title="Send a private message"
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: 6,
+                  background: "#00eaff",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "black",
+                  marginRight: 8
+                }}
+              >
+                Message
+              </button>
+              <button
+                onClick={() => onNavigate && onNavigate("video")}
+                title="Open a video room to call"
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: 6,
+                  background: "#00eaff",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "black"
+                }}
+              >
+                Call
+              </button>
+            </span>
           </div>
           ))
         )}

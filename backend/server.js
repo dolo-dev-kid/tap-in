@@ -16,6 +16,7 @@ const ChatMessage = require("./models/ChatMessage");
 const ChatFlag = require("./models/ChatFlag");
 const Notification = require("./models/Notification");
 const { scanChatMessage } = require("./chatFlags");
+const { sameUsername, findUserByUsername, usernameTaken } = require("./usernameLookup");
 
 const app = express();
 const server = http.createServer(app);
@@ -271,7 +272,14 @@ app.get("/health", (req, res) => {
 
 app.post("/auth/register", requireDb, async (req, res) => {
   try {
-    const { username, password } = req.body;
+    // Trim the username at signup: an untrimmed name (e.g. a trailing
+    // space from a phone keyboard) is invisible in the UI but then
+    // never matches anything anyone types — that is how Eatmyass68's
+    // account became unfindable for DMs. Reject a second account that
+    // only differs by case, so "Dolo45" / "dolo45" confusion can't
+    // happen again for new signups (existing accounts are untouched).
+    const username = typeof req.body?.username === "string" ? req.body.username.trim() : "";
+    const { password } = req.body;
 
     if (!username || !password) {
       return res.status(400).json({
@@ -279,7 +287,7 @@ app.post("/auth/register", requireDb, async (req, res) => {
       });
     }
 
-    const existing = await User.findOne({ username });
+    const existing = await usernameTaken(User, username);
 
     if (existing) {
       return res.status(400).json({
@@ -325,7 +333,12 @@ app.post("/auth/register", requireDb, async (req, res) => {
 
 app.post("/auth/login", requireDb, async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { password } = req.body;
+    // Trim the typed name, and fall back to the tolerant lookup so a
+    // member whose stored name has invisible whitespace/case drift
+    // can still log in with the name they see on screen. Exact match
+    // first, so "Dolo45" and the banned "dolo45" stay distinct.
+    const username = typeof req.body?.username === "string" ? req.body.username.trim() : "";
 
     if (!username || !password) {
       return res.status(400).json({
@@ -333,7 +346,7 @@ app.post("/auth/login", requireDb, async (req, res) => {
       });
     }
 
-    const user = await User.findOne({ username });
+    const user = (await User.findOne({ username })) || (await findUserByUsername(User, username));
 
     if (!user) {
       return res.status(400).json({
@@ -775,8 +788,15 @@ app.get("/chat/presence", requireDb, requireAuth, async (req, res) => {
     const users = await User.find({ _id: { $in: [...ids] } }).select("_id username lastSeenAt");
     const byName = new Map();
     for (const u of users) byName.set(u.username, u);
+    // Friend names are plain strings typed by the other person, so a
+    // stored name that differs by case/whitespace would miss the
+    // exact $in match — resolve each one tolerantly instead.
     const extra = [...names].filter((n) => !byName.has(n));
-    const extraUsers = extra.length ? await User.find({ username: { $in: extra } }).select("_id username lastSeenAt") : [];
+    const extraUsers = [];
+    for (const n of extra) {
+      const u = await findUserByUsername(User, n);
+      if (u) extraUsers.push(u);
+    }
     const all = [...users, ...extraUsers];
     res.json({
       success: true,
@@ -808,8 +828,13 @@ app.post("/chat/dm", requireDb, requireAuth, async (req, res) => {
   try {
     const username = typeof req.body?.username === "string" ? req.body.username.trim() : "";
     if (!username) return res.status(400).json({ error: "Give the username to chat with" });
-    if (username === req.user.username) return res.status(400).json({ error: "You can't DM yourself" });
-    const other = await User.findOne({ username });
+    // "You can't DM yourself" even via a case/whitespace variant of
+    // your own name — and the lookup itself is tolerant, so a member
+    // whose stored name differs invisibly from what you type (the
+    // Eatmyass68 bug) is found instead of "No member with that
+    // username".
+    if (sameUsername(username, req.user.username)) return res.status(400).json({ error: "You can't DM yourself" });
+    const other = await findUserByUsername(User, username);
     if (!other) return res.status(404).json({ error: "No member with that username" });
     const ids = [String(req.user._id), String(other._id)].sort();
     const dmKey = ids.join("_");
@@ -837,10 +862,14 @@ app.post("/chat/groups", requireDb, requireAuth, async (req, res) => {
     const name = typeof req.body?.name === "string" ? req.body.name.trim().slice(0, 80) : "";
     if (!name) return res.status(400).json({ error: "Give the group a name" });
     const wanted = Array.isArray(req.body?.members) ? req.body.members : [];
-    const usernames = [...new Set(wanted.map((m) => String(m).trim()).filter(Boolean))].filter((u) => u !== req.user.username).slice(0, 49);
-    const found = usernames.length ? await User.find({ username: { $in: usernames } }) : [];
+    const usernames = [...new Set(wanted.map((m) => String(m).trim()).filter(Boolean))].filter((u) => !sameUsername(u, req.user.username)).slice(0, 49);
+    const found = [];
+    for (const u of usernames) {
+      const user = await findUserByUsername(User, u);
+      if (user) found.push(user);
+    }
     const foundNames = found.map((u) => u.username);
-    const missing = usernames.filter((u) => !foundNames.includes(u));
+    const missing = usernames.filter((u) => !found.some((f) => sameUsername(f.username, u)));
     if (missing.length) {
       return res.status(404).json({ error: `No member with username: ${missing.join(", ")}` });
     }
@@ -906,7 +935,7 @@ app.post("/chat/rooms/:id/members", requireDb, requireAuth, async (req, res) => 
     }
     const username = typeof req.body?.username === "string" ? req.body.username.trim() : "";
     if (!username) return res.status(400).json({ error: "Give the username to add" });
-    const user = await User.findOne({ username });
+    const user = await findUserByUsername(User, username);
     if (!user) return res.status(404).json({ error: "No member with that username" });
     if (isRoomMember(room, user._id)) return res.status(400).json({ error: `${username} is already in this group` });
     room.members.push(user._id);
@@ -1137,28 +1166,30 @@ app.post("/notifications/read-all", requireDb, requireAuth, async (req, res) => 
 // ways, so each of you shows up in the other's list.
 
 function hasFriendRequest(user, username) {
-  return (user.friendRequests || []).some((r) => r.username === username);
+  // Compare tolerantly: a request stored under a case/whitespace
+  // variant of the name is still the same person (Eatmyass68 bug).
+  return (user.friendRequests || []).some((r) => sameUsername(r.username, username));
 }
 
 function removeFriendRequest(user, username) {
-  user.friendRequests = (user.friendRequests || []).filter((r) => r.username !== username);
+  user.friendRequests = (user.friendRequests || []).filter((r) => !sameUsername(r.username, username));
 }
 
 function addFriendBothWays(a, b) {
-  if (!a.friends.includes(b.username)) a.friends.push(b.username);
-  if (!b.friends.includes(a.username)) b.friends.push(a.username);
+  if (!(a.friends || []).some((f) => sameUsername(f, b.username))) a.friends.push(b.username);
+  if (!(b.friends || []).some((f) => sameUsername(f, a.username))) b.friends.push(a.username);
 }
 
 // Send a pending request to the target user. Shared by the
 // authenticated endpoint and the legacy /friends/add route.
 async function sendFriendRequest(sender, friendName) {
   if (!friendName) return { status: 400, error: "Give the username to add" };
-  if (friendName === sender.username) return { status: 400, error: "You can't add yourself as a friend" };
+  if (sameUsername(friendName, sender.username)) return { status: 400, error: "You can't add yourself as a friend" };
   if (sender.banned) return { status: 403, error: "This account has been banned" };
-  const target = await User.findOne({ username: friendName });
+  const target = await findUserByUsername(User, friendName);
   if (!target) return { status: 404, error: "No member with that username" };
   if (target.banned) return { status: 400, error: "That account is not available" };
-  if ((sender.friends || []).includes(friendName)) {
+  if ((sender.friends || []).some((f) => sameUsername(f, friendName))) {
     return { status: 400, error: `${friendName} is already your friend` };
   }
   if (hasFriendRequest(target, sender.username)) {
@@ -1207,7 +1238,7 @@ app.get("/friends/requests", requireDb, requireAuth, async (req, res) => {
     for (const r of requests) {
       const requester = r.userId
         ? await User.findById(r.userId).select("_id username lastSeenAt")
-        : await User.findOne({ username: r.username }).select("_id username lastSeenAt");
+        : await findUserByUsername(User, r.username);
       enriched.push({
         username: r.username,
         userId: requester ? String(requester._id) : (r.userId ? String(r.userId) : null),
@@ -1253,7 +1284,7 @@ app.post("/friends/requests/:username/accept", requireDb, requireAuth, async (re
     if (!hasFriendRequest(req.user, username)) {
       return res.status(404).json({ error: "No friend request from that person" });
     }
-    const other = await User.findOne({ username });
+    const other = await findUserByUsername(User, username);
     if (!other) {
       removeFriendRequest(req.user, username);
       await req.user.save();
@@ -1450,8 +1481,14 @@ async function markOnline(socketUser) {
     // A friend just came online: notify the people who can see them
     // — their friends, their DM/group partners, and the admin — so
     // the bell lights up instead of the green dot being the only clue.
+    // Friends are stored as plain name strings, so match tolerantly:
+    // a friend stored under a case/whitespace variant of the name
+    // (Eatmyass68 bug) still counts as a friend.
     try {
-      const friendDocs = await User.find({ friends: socketUser.username }).select("_id");
+      const allUsers = await User.find({}).select("_id friends");
+      const friendDocs = allUsers.filter((u) =>
+        (u.friends || []).some((f) => sameUsername(f, socketUser.username))
+      );
       const notifyIds = new Set(recipients);
       for (const f of friendDocs) notifyIds.add(String(f._id));
       notifyIds.delete(uid);
@@ -1580,7 +1617,7 @@ io.on("connection", (socket) => {
     // are NOT spammed with every global message.
     if (!text.trim() || !senderUsername) return;
     try {
-      const sender = await User.findOne({ username: senderUsername }).select("_id");
+      const sender = await findUserByUsername(User, senderUsername);
       for (const onlineId of [...onlineUserIds]) {
         if (sender && onlineId === String(sender._id)) continue;
         await createNotification(onlineId, {
