@@ -10,6 +10,20 @@ const UserSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  // Owner moderation for Tap In. "user" is a regular member; "admin" is
+  // the owner (Wesley / Dolo45) and can see and moderate every account.
+  // This is moderation for the owner's own app only — it is not a bypass
+  // for anyone else's account, and it never exposes passwords.
+  role: {
+    type: String,
+    enum: ["user", "admin"],
+    default: "user"
+  },
+  // Banned accounts cannot log in. Only an admin can set/clear this.
+  banned: {
+    type: Boolean,
+    default: false
+  },
   bio: {
     type: String,
     default: ""

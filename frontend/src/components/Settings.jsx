@@ -23,6 +23,7 @@ export default function Settings() {
     localStorage.removeItem("token");
     localStorage.removeItem("tapin_username");
     localStorage.removeItem("tapin_user_id");
+    localStorage.removeItem("tapin_role");
     window.location.href = "/";
   };
 

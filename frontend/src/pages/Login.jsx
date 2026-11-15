@@ -36,6 +36,10 @@ export default function Login() {
         if (response.data.user?.id) {
           localStorage.setItem("tapin_user_id", response.data.user.id);
         }
+        // Role drives the Admin tab (Sidebar shows it only for "admin").
+        if (response.data.user?.role) {
+          localStorage.setItem("tapin_role", response.data.user.role);
+        }
         window.location.href = "/";
       }
     } catch (err) {

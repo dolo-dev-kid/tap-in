@@ -10,6 +10,7 @@ import Servers from "./components/Servers";
 import StreamDashboard from "./components/StreamDashboard";
 import Overlay from "./components/Overlay";
 import Settings from "./components/Settings";
+import AdminPanel from "./components/AdminPanel";
 
 export default function App() {
   const [page, setPage] = useState("landing");
@@ -29,6 +30,7 @@ export default function App() {
         {page === "dashboard" && <StreamDashboard onNavigate={setPage} />}
         {page === "overlay" && <Overlay />}
         {page === "settings" && <Settings />}
+        {page === "admin" && <AdminPanel />}
       </div>
     </div>
   );

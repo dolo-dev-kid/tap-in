@@ -50,6 +50,61 @@ if (!JWT_SECRET) {
 }
 const jwtSecret = JWT_SECRET || "dev-only-change-me";
 
+// --- Owner / admin role -------------------------------------------------
+// SAFETY: this is owner moderation for Wesley's own app (Tap In) —
+// keeping the community safe, e.g. keeping creeps away from kids on the
+// app. It is not a bypass for other people's accounts, and admin
+// endpoints never return passwords or password hashes.
+// The owner's username is set by env var, never hardcoded here. On
+// register/login, an exact username match with ADMIN_USERNAME gets the
+// "admin" role. Set ADMIN_USERNAME in the backend env (Render: env vars;
+// local: backend/.env) to the owner's Tap In username.
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "";
+function isOwnerUsername(username) {
+  return Boolean(ADMIN_USERNAME) && username === ADMIN_USERNAME;
+}
+
+// Verify the JWT from `Authorization: Bearer <token>` and load the user.
+async function requireAuth(req, res, next) {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+  if (!token) return res.status(401).json({ error: "Login required" });
+  try {
+    const decoded = jwt.verify(token, jwtSecret);
+    const user = await User.findById(decoded.id);
+    if (!user) return res.status(401).json({ error: "User not found" });
+    if (user.banned) return res.status(403).json({ error: "This account has been banned" });
+    req.user = user;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: "Invalid or expired login" });
+  }
+}
+
+// Admin only: must be logged in AND have role "admin".
+function requireAdmin(req, res, next) {
+  if (!req.user || req.user.role !== "admin") {
+    return res.status(403).json({ error: "Admin access only" });
+  }
+  next();
+}
+
+// Public-safe shape for a user in admin listings: never include the
+// password field (hash included — it is never selected here).
+function publicUser(u) {
+  return {
+    id: u._id,
+    username: u.username,
+    bio: u.bio || "",
+    avatar: u.avatar || "",
+    role: u.role,
+    banned: Boolean(u.banned),
+    createdAt: u.createdAt,
+    friendCount: (u.friends || []).length,
+    serverCount: (u.servers || []).length
+  };
+}
+
 const rooms = {};
 
 // Routes
@@ -83,12 +138,14 @@ app.post("/auth/register", requireDb, async (req, res) => {
 
     const user = await User.create({
       username,
-      password: hashedPassword
+      password: hashedPassword,
+      role: isOwnerUsername(username) ? "admin" : "user"
     });
 
     res.json({
       success: true,
-      userId: user._id
+      userId: user._id,
+      role: user.role
     });
   } catch (err) {
     res.status(500).json({
@@ -123,10 +180,24 @@ app.post("/auth/login", requireDb, async (req, res) => {
       });
     }
 
+    if (user.banned) {
+      return res.status(403).json({
+        error: "This account has been banned"
+      });
+    }
+
+    // Owner account created before ADMIN_USERNAME was set still becomes
+    // admin on login when the env var matches its username exactly.
+    if (isOwnerUsername(user.username) && user.role !== "admin") {
+      user.role = "admin";
+      await user.save();
+    }
+
     const token = jwt.sign(
       {
         id: user._id,
-        username: user.username
+        username: user.username,
+        role: user.role
       },
       jwtSecret,
       {
@@ -141,7 +212,9 @@ app.post("/auth/login", requireDb, async (req, res) => {
         id: user._id,
         username: user.username,
         bio: user.bio,
-        avatar: user.avatar
+        avatar: user.avatar,
+        role: user.role,
+        banned: Boolean(user.banned)
       }
     });
   } catch (err) {
@@ -204,6 +277,65 @@ app.post("/servers/create", requireDb, async (req, res) => {
     res.status(500).json({
       error: err.message
     });
+  }
+});
+
+// --- Admin endpoints (owner moderation) -------------------------------
+// All admin routes require a valid login AND role "admin". They return
+// public user info only — never passwords or password hashes.
+
+// GET /admin/users — list every account (admin only).
+app.get("/admin/users", requireDb, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const users = await User.find({}).select("-password").sort({ createdAt: 1 });
+    res.json({ success: true, users: users.map(publicUser) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /admin/users/:id/role — set role to "user" or "admin" (admin only).
+// An admin cannot change their own role, so the owner can't lock
+// themselves out by accident.
+app.post("/admin/users/:id/role", requireDb, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { role } = req.body;
+    if (!["user", "admin"].includes(role)) {
+      return res.status(400).json({ error: 'Role must be "user" or "admin"' });
+    }
+    if (req.params.id === String(req.user._id)) {
+      return res.status(400).json({ error: "You cannot change your own role" });
+    }
+    const target = await User.findById(req.params.id);
+    if (!target) return res.status(404).json({ error: "User not found" });
+    target.role = role;
+    await target.save();
+    res.json({ success: true, user: publicUser(target) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /admin/users/:id/ban — ban or unban an account (admin only).
+// Body: { "banned": true } to ban, { "banned": false } to unban.
+// Banned users cannot log in, and their tokens stop working.
+// An admin cannot ban themselves.
+app.post("/admin/users/:id/ban", requireDb, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { banned } = req.body;
+    if (typeof banned !== "boolean") {
+      return res.status(400).json({ error: '"banned" must be true or false' });
+    }
+    if (req.params.id === String(req.user._id)) {
+      return res.status(400).json({ error: "You cannot ban yourself" });
+    }
+    const target = await User.findById(req.params.id);
+    if (!target) return res.status(404).json({ error: "User not found" });
+    target.banned = banned;
+    await target.save();
+    res.json({ success: true, user: publicUser(target) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

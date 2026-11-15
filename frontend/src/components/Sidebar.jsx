@@ -19,11 +19,19 @@ export default function Sidebar({ onNavigate, page }) {
     typeof localStorage !== "undefined"
       ? localStorage.getItem("tapin_username")
       : null;
+  // Admin tab shows only for the owner's admin account.
+  const isAdmin =
+    typeof localStorage !== "undefined" &&
+    localStorage.getItem("tapin_role") === "admin";
+  const tabs = isAdmin
+    ? [...TABS, { id: "admin", icon: "🛡️", label: "Admin" }]
+    : TABS;
 
   const logOut = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("tapin_username");
     localStorage.removeItem("tapin_user_id");
+    localStorage.removeItem("tapin_role");
     window.location.href = "/";
   };
 
@@ -41,7 +49,7 @@ export default function Sidebar({ onNavigate, page }) {
         flexShrink: 0
       }}
     >
-      {TABS.map((t) => {
+      {tabs.map((t) => {
         const active = page === t.id;
         return (
           <button
