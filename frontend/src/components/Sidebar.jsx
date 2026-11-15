@@ -72,6 +72,24 @@ export default function Sidebar({ onNavigate, page }) {
 
       <div style={{ flex: 1 }} />
 
+      <div
+        style={{
+          textAlign: "center",
+          width: "100%",
+          padding: "0 4px",
+          marginBottom: 10,
+          color: "#00eaff",
+          fontSize: 9,
+          lineHeight: 1.5
+        }}
+      >
+        RSO • RNO
+        <br />
+        Double G
+        <br />
+        🕊️ RIP Booju
+      </div>
+
       {username ? (
         <div style={{ textAlign: "center", width: "100%", padding: "0 6px" }}>
           <div

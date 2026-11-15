@@ -83,6 +83,9 @@ export default function Settings() {
           Peer-to-peer video calling, group chat, live streaming, and servers —
           built by Dolo45.
         </p>
+        <p style={{ marginTop: 10, color: "#00eaff", fontSize: 14, fontWeight: "bold" }}>
+          RSO • RNO • Double G Global Gangsters — 🕊️ RIP Booju
+        </p>
       </div>
     </div>
   );
