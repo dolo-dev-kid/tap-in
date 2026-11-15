@@ -9,6 +9,7 @@ import axiosInstance from "../api/axios";
 // or ban themselves.
 export default function AdminPanel() {
   const [users, setUsers] = useState([]);
+  const [uploads, setUploads] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -39,8 +40,32 @@ export default function AdminPanel() {
     }
   };
 
+  const loadUploads = async () => {
+    try {
+      const res = await axiosInstance.get("/admin/uploads", {
+        headers: authHeaders()
+      });
+      setUploads(res.data.uploads || []);
+    } catch (err) {
+      // Uploads list is secondary — users list already reports auth errors.
+    }
+  };
+
+  const removeUpload = async (upload) => {
+    if (!window.confirm(`Delete ${upload.filename} uploaded by ${upload.username}?`)) return;
+    try {
+      await axiosInstance.delete(`/uploads/${upload.id}`, {
+        headers: authHeaders()
+      });
+      loadUploads();
+    } catch (err) {
+      setError(err.response?.data?.error || "Could not delete that upload");
+    }
+  };
+
   useEffect(() => {
     loadUsers();
+    loadUploads();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -174,6 +199,51 @@ export default function AdminPanel() {
 
       <button onClick={loadUsers} style={{ ...btn, marginTop: 20 }}>
         Refresh list
+      </button>
+
+      <h2 style={{ marginTop: 40 }}>📁 Uploads</h2>
+      <p style={{ marginTop: 10, color: "#aaa", fontSize: 14 }}>
+        Every photo, video, song and file members uploaded — newest first.
+        Delete anything that doesn't belong on Tap In.
+      </p>
+      {uploads.length === 0 ? (
+        <p style={{ marginTop: 16, color: "#aaa" }}>No uploads yet.</p>
+      ) : (
+        <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+          {uploads.map((u) => (
+            <div
+              key={u.id}
+              style={{
+                background: "#1e1f22",
+                padding: 16,
+                borderRadius: 12,
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: 12
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 180 }}>
+                <div style={{ fontWeight: "bold", fontSize: 15 }}>{u.filename}</div>
+                <div style={{ color: "#aaa", fontSize: 13, marginTop: 4 }}>
+                  {u.kind} · {(u.size / 1024 / 1024).toFixed(2)} MB · by{" "}
+                  <strong style={{ color: "#fff" }}>{u.username}</strong>
+                  {" · "}
+                  {u.createdAt ? new Date(u.createdAt).toLocaleString() : "—"}
+                </div>
+              </div>
+              <button
+                onClick={() => removeUpload(u)}
+                style={{ ...btn, background: "#b3261e", color: "white", borderColor: "#b3261e" }}
+              >
+                Delete file
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <button onClick={loadUploads} style={{ ...btn, marginTop: 20 }}>
+        Refresh uploads
       </button>
     </div>
   );

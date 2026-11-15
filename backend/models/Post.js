@@ -15,8 +15,24 @@ const PostSchema = new mongoose.Schema({
   },
   text: {
     type: String,
-    required: true,
+    required: false,
+    default: "",
     maxlength: 500
+  },
+  // Optional attached upload (photo, video, audio or file). The media
+  // snapshot is copied at post time so the feed renders without a join;
+  // the bytes live in GridFS and the upload is owned by userId, so the
+  // owner (admin) can trace and remove it.
+  media: {
+    uploadId: { type: mongoose.Schema.Types.ObjectId, ref: "Upload" },
+    url: { type: String, default: "" },
+    filename: { type: String, default: "" },
+    mimeType: { type: String, default: "" },
+    kind: {
+      type: String,
+      enum: ["image", "video", "audio", "file"],
+      default: "file"
+    }
   },
   createdAt: {
     type: Date,

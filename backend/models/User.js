@@ -32,6 +32,15 @@ const UserSchema = new mongoose.Schema({
     type: String,
     default: ""
   },
+  // MySpace-style profile song: one of the member's own uploaded audio
+  // files (MP3/WAV). Plays when someone opens this profile. The snapshot
+  // is copied at pick time; the bytes live in GridFS under the upload.
+  profileSong: {
+    uploadId: { type: mongoose.Schema.Types.ObjectId, ref: "Upload" },
+    url: { type: String, default: "" },
+    filename: { type: String, default: "" },
+    mimeType: { type: String, default: "" }
+  },
   friends: {
     type: [String],
     default: []
