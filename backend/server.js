@@ -7,6 +7,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { Server } = require("socket.io");
 const User = require("./models/User");
+const Post = require("./models/Post");
 
 const app = express();
 const server = http.createServer(app);
@@ -229,6 +230,83 @@ app.get("/users/:id", requireDb, async (req, res) => {
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ error: "User not found" });
     res.json({ id: user._id, username: user.username, bio: user.bio, avatar: user.avatar, friends: user.friends, servers: user.servers });
+  } catch (err) {
+    res.status(500).json({
+      error: err.message
+    });
+  }
+});
+
+// PATCH /users/:id — update your own bio and avatar. An admin may edit
+// any account. Only bio/avatar are editable here — never username, role,
+// or password. If the API is unreachable the profile page falls back to
+// saving on the device and says so.
+app.patch("/users/:id", requireDb, requireAuth, async (req, res) => {
+  try {
+    const isSelf = req.params.id === String(req.user._id);
+    const isAdmin = req.user.role === "admin";
+    if (!isSelf && !isAdmin) {
+      return res.status(403).json({ error: "You can only edit your own profile" });
+    }
+    const target = await User.findById(req.params.id);
+    if (!target) return res.status(404).json({ error: "User not found" });
+    const { bio, avatar } = req.body || {};
+    if (bio !== undefined) {
+      if (typeof bio !== "string") return res.status(400).json({ error: "Bio must be text" });
+      target.bio = bio.trim().slice(0, 500);
+    }
+    if (avatar !== undefined) {
+      if (typeof avatar !== "string") return res.status(400).json({ error: "Avatar must be text" });
+      target.avatar = avatar.trim().slice(0, 500);
+    }
+    await target.save();
+    res.json({ id: target._id, username: target.username, bio: target.bio, avatar: target.avatar, friends: target.friends, servers: target.servers });
+  } catch (err) {
+    res.status(500).json({
+      error: err.message
+    });
+  }
+});
+
+// --- Feed posts (real user posts only — no sample posts) ---------------
+
+// GET /posts — public read, newest first.
+app.get("/posts", requireDb, async (req, res) => {
+  try {
+    const posts = await Post.find({}).sort({ createdAt: -1 }).limit(100);
+    res.json({
+      posts: posts.map((p) => ({
+        id: p._id,
+        username: p.username,
+        text: p.text,
+        createdAt: p.createdAt
+      }))
+    });
+  } catch (err) {
+    res.status(500).json({
+      error: err.message
+    });
+  }
+});
+
+// POST /posts — logged-in users only. Body: { "text": "..." }.
+// Rejects empty posts and posts over 500 characters.
+app.post("/posts", requireDb, requireAuth, async (req, res) => {
+  try {
+    const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+    if (!text) return res.status(400).json({ error: "Post text is required" });
+    if (text.length > 500) {
+      return res.status(400).json({ error: "Post must be 500 characters or fewer" });
+    }
+    const post = await Post.create({
+      userId: req.user._id,
+      username: req.user.username,
+      text
+    });
+    res.json({
+      success: true,
+      post: { id: post._id, username: post.username, text: post.text, createdAt: post.createdAt }
+    });
   } catch (err) {
     res.status(500).json({
       error: err.message
