@@ -40,7 +40,7 @@ export default function Login() {
         if (response.data.user?.role) {
           localStorage.setItem("tapin_role", response.data.user.role);
         }
-        window.location.href = "/";
+        window.location.href = "#/";
       }
     } catch (err) {
       const serverError = err.response?.data?.error || "Login failed";
@@ -148,10 +148,10 @@ export default function Login() {
         </form>
 
         <p style={{ marginTop: 20, textAlign: "center" }}>
-          Don't have an account? <a href="/register" style={{ color: "#00eaff" }}>Register</a>
+          Don't have an account? <a href="#/register" style={{ color: "#00eaff" }}>Register</a>
         </p>
         <p style={{ marginTop: 10, textAlign: "center" }}>
-          <a href="/" style={{ color: "#aaa" }}>← Back to Tap-In</a>
+          <a href="#/" style={{ color: "#aaa" }}>← Back to Tap-In</a>
         </p>
       </div>
     </div>

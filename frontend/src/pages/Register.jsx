@@ -36,7 +36,7 @@ export default function Register() {
       });
 
       if (response.data.success) {
-        window.location.href = "/login";
+        window.location.href = "#/login";
       }
     } catch (err) {
       const serverError = err.response?.data?.error || "Registration failed";
@@ -160,10 +160,10 @@ export default function Register() {
         </form>
 
         <p style={{ marginTop: 20, textAlign: "center" }}>
-          Already have an account? <a href="/login" style={{ color: "#00eaff" }}>Login</a>
+          Already have an account? <a href="#/login" style={{ color: "#00eaff" }}>Login</a>
         </p>
         <p style={{ marginTop: 10, textAlign: "center" }}>
-          <a href="/" style={{ color: "#aaa" }}>← Back to Tap-In</a>
+          <a href="#/" style={{ color: "#aaa" }}>← Back to Tap-In</a>
         </p>
       </div>
     </div>

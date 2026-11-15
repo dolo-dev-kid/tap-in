@@ -24,7 +24,7 @@ export default function Settings() {
     localStorage.removeItem("tapin_username");
     localStorage.removeItem("tapin_user_id");
     localStorage.removeItem("tapin_role");
-    window.location.href = "/";
+    window.location.href = "#/";
   };
 
   return (
@@ -46,10 +46,10 @@ export default function Settings() {
             <p style={{ marginTop: 6, color: "#aaa", fontSize: 14 }}>
               Log in to save friends, servers, and your profile to your account.
             </p>
-            <a href="/login" style={{ ...btn, display: "inline-block", textDecoration: "none", marginRight: 10 }}>
+            <a href="#/login" style={{ ...btn, display: "inline-block", textDecoration: "none", marginRight: 10 }}>
               Log in
             </a>
-            <a href="/register" style={{ ...btn, display: "inline-block", textDecoration: "none" }}>
+            <a href="#/register" style={{ ...btn, display: "inline-block", textDecoration: "none" }}>
               Sign up
             </a>
           </>

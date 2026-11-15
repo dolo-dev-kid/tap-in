@@ -27,7 +27,7 @@ export default function Landing() {
 
       <div style={{ marginTop: 30, display: "flex", gap: 12 }}>
         <a
-          href="/login"
+          href="#/login"
           style={{
             padding: "14px 32px",
             borderRadius: 10,
@@ -40,7 +40,7 @@ export default function Landing() {
           Log in
         </a>
         <a
-          href="/register"
+          href="#/register"
           style={{
             padding: "14px 32px",
             borderRadius: 10,

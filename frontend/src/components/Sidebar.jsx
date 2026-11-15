@@ -32,7 +32,7 @@ export default function Sidebar({ onNavigate, page }) {
     localStorage.removeItem("tapin_username");
     localStorage.removeItem("tapin_user_id");
     localStorage.removeItem("tapin_role");
-    window.location.href = "/";
+    window.location.href = "#/";
   };
 
   return (
@@ -90,10 +90,10 @@ export default function Sidebar({ onNavigate, page }) {
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <a href="/login" style={{ ...authBtn, textDecoration: "none", textAlign: "center" }}>
+          <a href="#/login" style={{ ...authBtn, textDecoration: "none", textAlign: "center" }}>
             Log in
           </a>
-          <a href="/register" style={{ ...authBtn, textDecoration: "none", textAlign: "center" }}>
+          <a href="#/register" style={{ ...authBtn, textDecoration: "none", textAlign: "center" }}>
             Sign up
           </a>
         </div>
