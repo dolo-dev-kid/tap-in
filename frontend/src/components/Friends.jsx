@@ -1,14 +1,31 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import axiosInstance from "../api/axios";
 
-// Friends are stored per-account, so Add Friend calls the real API.
-// Without a login it says so plainly instead of pretending to work;
-// while the database is down the server's 503 message is shown as-is.
+// Friends are the logged-in user's real friends from the database.
+// No sample friends.
 export default function Friends({ onNavigate }) {
-  const [friends, setFriends] = useState(["Alex", "Mia", "Jay", "Sam"]);
+  const [friends, setFriends] = useState([]);
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const userId =
+    typeof localStorage !== "undefined"
+      ? localStorage.getItem("tapin_user_id")
+      : null;
+
+  useEffect(() => {
+    if (!userId) return;
+    setLoading(true);
+    axiosInstance
+      .get(`/users/${userId}`)
+      .then((res) => setFriends(res.data?.friends || []))
+      .catch(() => {
+        setMessage("Could not load your friends — please try again.");
+      })
+      .finally(() => setLoading(false));
+  }, [userId]);
 
   const addFriend = async () => {
     const friendName = name.trim();
@@ -43,13 +60,14 @@ export default function Friends({ onNavigate }) {
   return (
     <div style={{ padding: 40, color: "white" }}>
       <h1>Your Friends</h1>
-      <p style={{ marginTop: 8, color: "#aaa", fontSize: 14 }}>
-        Sample friends below — your real friends list appears once you log in
-        and the database is connected.
-      </p>
 
       <div style={{ marginTop: 20 }}>
-        {friends.map((friend, i) => (
+        {loading ? (
+          <p style={{ color: "#aaa" }}>Loading your friends…</p>
+        ) : friends.length === 0 ? (
+          <p style={{ color: "#aaa" }}>No friends yet — add your first friend.</p>
+        ) : (
+          friends.map((friend, i) => (
           <div
             key={i}
             style={{
@@ -78,7 +96,8 @@ export default function Friends({ onNavigate }) {
               Call
             </button>
           </div>
-        ))}
+          ))
+        )}
       </div>
 
       <div style={{ marginTop: 30 }}>

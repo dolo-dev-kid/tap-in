@@ -5,8 +5,8 @@ import { useState } from "react";
 // overlay can actually be built on screen (frontend-only for now).
 const WIDGETS = [
   { id: "chat", label: "Chat box", preview: "💬 Chat messages appear here" },
-  { id: "follow", label: "New follower alert", preview: "🎉 Mia just followed!" },
-  { id: "donation", label: "Donation goal", preview: "💰 Donation goal: $120 / $500" }
+  { id: "follow", label: "New follower alert", preview: "🎉 Someone just followed!" },
+  { id: "donation", label: "Donation goal", preview: "💰 Donation goal: $0 / $500" }
 ];
 
 export default function Overlay() {
