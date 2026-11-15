@@ -53,6 +53,17 @@ const UserSchema = new mongoose.Schema({
     type: [String],
     default: []
   },
+  // Pending incoming friend requests. "Add Friend" sends a request
+  // here — it does NOT instantly add anyone. The recipient sees the
+  // request in their Friends tab (with Accept / Decline) and the
+  // requester only becomes a friend once it is accepted.
+  // Before this existed, adding a friend only wrote the name into
+  // the sender's own list, so the other person never saw anything.
+  friendRequests: [{
+    username: { type: String, required: true },
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    createdAt: { type: Date, default: Date.now }
+  }],
   servers: {
     type: [String],
     default: []

@@ -8,13 +8,14 @@ const TABS = [
   { id: "chat", icon: "💬", label: "Chat" },
   { id: "profile", icon: "👤", label: "Profile" },
   { id: "friends", icon: "👥", label: "Friends" },
+  { id: "notifications", icon: "🔔", label: "Alerts" },
   { id: "servers", icon: "🛡️", label: "Servers" },
   { id: "dashboard", icon: "📊", label: "Stream" },
   { id: "overlay", icon: "🎨", label: "Overlay" },
   { id: "settings", icon: "⚙️", label: "Settings" }
 ];
 
-export default function Sidebar({ onNavigate, page }) {
+export default function Sidebar({ onNavigate, page, friendRequestCount = 0, notificationCount = 0 }) {
   const username =
     typeof localStorage !== "undefined"
       ? localStorage.getItem("tapin_username")
@@ -51,14 +52,27 @@ export default function Sidebar({ onNavigate, page }) {
     >
       {tabs.map((t) => {
         const active = page === t.id;
+        // Red badge counts: pending friend requests on Friends, unread
+        // notifications on Alerts — visible on the sidebar the moment
+        // the app opens, no tab to open first.
+        const badgeCount =
+          t.id === "friends" ? friendRequestCount
+          : t.id === "notifications" ? notificationCount
+          : 0;
+        const showBadge = badgeCount > 0;
+        const badgeLabel =
+          t.id === "friends"
+            ? `Friends — ${badgeCount} friend request${badgeCount === 1 ? "" : "s"} waiting`
+            : `Alerts — ${badgeCount} unread notification${badgeCount === 1 ? "" : "s"}`;
         return (
           <button
             key={t.id}
-            title={t.label}
-            aria-label={t.label}
+            title={showBadge ? badgeLabel : t.label}
+            aria-label={showBadge ? badgeLabel : t.label}
             onClick={() => onNavigate(t.id)}
             style={{
               ...btn,
+              position: "relative",
               background: active ? "#00eaff" : "#2b2d31",
               color: active ? "#000" : "#fff",
               outline: active ? "2px solid #fff" : "none"
@@ -66,6 +80,28 @@ export default function Sidebar({ onNavigate, page }) {
           >
             <span style={{ fontSize: 22, lineHeight: 1 }}>{t.icon}</span>
             <span style={{ fontSize: 10, marginTop: 3 }}>{t.label}</span>
+            {showBadge && (
+              <span
+                style={{
+                  position: "absolute",
+                  top: 2,
+                  right: 2,
+                  minWidth: 20,
+                  height: 20,
+                  borderRadius: 10,
+                  background: "#ff3b30",
+                  color: "white",
+                  fontSize: 12,
+                  fontWeight: "bold",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: "0 5px"
+                }}
+              >
+                {badgeCount > 9 ? "9+" : badgeCount}
+              </span>
+            )}
           </button>
         );
       })}

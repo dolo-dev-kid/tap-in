@@ -9,12 +9,21 @@ const socket = io(import.meta.env.VITE_API_URL || "http://localhost:3001");
 // toughest home networks — see TAPIN_OVERNIGHT_NOTES.md.)
 const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 
-export default function VideoChat() {
+export default function VideoChat({ initialRoom }) {
   const [room, setRoom] = useState("global");
   const [roomInput, setRoomInput] = useState("global");
   const [joined, setJoined] = useState(false);
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState("");
+
+  // Tapping a "just went live" notification opens this page with the
+  // broadcaster's room already filled in — one tap on Join and
+  // you're watching them.
+  useEffect(() => {
+    if (initialRoom && typeof initialRoom === "string") {
+      setRoomInput(initialRoom.toLowerCase());
+    }
+  }, [initialRoom]);
 
   const localVideo = useRef(null);
   const localStream = useRef(null);
@@ -66,6 +75,8 @@ export default function VideoChat() {
       socket.off("answer", onAnswer);
       socket.off("ice-candidate", onIce);
       socket.off("user-left", onUserLeft);
+      // Leaving the page while live ends the broadcast.
+      socket.emit("stop-live");
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -98,7 +109,25 @@ export default function VideoChat() {
     localStream.current = stream;
     setJoined(true);
     setJoining(false);
-    socket.emit("join-room", roomName);
+    // This socket was created without a login, so the server can't
+    // tell who is going live. Reconnect it with the login token, then
+    // join the room and announce the broadcast — that announcement is
+    // what sends everyone the "just went live" notification.
+    const token =
+      typeof localStorage !== "undefined" ? localStorage.getItem("token") || "" : "";
+    socket.auth = { token };
+    const announceLive = () => {
+      socket.emit("join-room", roomName);
+      socket.emit("go-live", { room: roomName });
+    };
+    if (socket.connected) {
+      socket.once("connect", announceLive);
+      socket.disconnect();
+      socket.connect();
+    } else {
+      socket.once("connect", announceLive);
+      socket.connect();
+    }
 
     if (localVideo.current) {
       localVideo.current.srcObject = stream;
@@ -106,6 +135,8 @@ export default function VideoChat() {
   };
 
   const leaveRoom = () => {
+    // Ending the broadcast so nobody keeps getting told you're live.
+    socket.emit("stop-live");
     Object.values(peers.current).forEach((p) => {
       try {
         p.close();

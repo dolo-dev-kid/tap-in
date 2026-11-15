@@ -14,6 +14,7 @@ const Upload = require("./models/Upload");
 const ChatRoom = require("./models/ChatRoom");
 const ChatMessage = require("./models/ChatMessage");
 const ChatFlag = require("./models/ChatFlag");
+const Notification = require("./models/Notification");
 const { scanChatMessage } = require("./chatFlags");
 
 const app = express();
@@ -36,6 +37,15 @@ const io = new Server(server, {
 // chat rooms and messages live in MongoDB (ChatRoom / ChatMessage),
 // so a Render restart never loses anyone's chats.
 const rooms = {};
+
+// Who is live right now: room name -> { userId, username, room,
+// startedAt }. A "go live" is joining a video room with the camera
+// on (Stream Dashboard -> Video Chat) — there was no backend event
+// for it at all before this, so nobody could ever be told someone
+// went live. The map lives in memory; the notifications it triggers
+// are stored in MongoDB, so they survive a restart even if the
+// "live now" list does not.
+const liveBroadcasts = new Map();
 
 // MongoDB Connection — do not crash the server if the DB is down / not configured.
 // Auth routes return 503 with a clear message until MongoDB is connected.
@@ -284,6 +294,22 @@ app.post("/auth/register", requireDb, async (req, res) => {
       password: hashedPassword,
       role: isOwnerUsername(username) ? "admin" : "user"
     });
+
+    // A new member joined: tell the owner (admins only — not every
+    // member, or every signup would spam the whole app).
+    try {
+      const admins = await User.find({ role: "admin" }).select("_id");
+      for (const admin of admins) {
+        if (String(admin._id) === String(user._id)) continue;
+        await createNotification(admin._id, {
+          type: "member_joined",
+          title: "New member joined Tap In",
+          body: `${username} just joined Tap In.`,
+          fromUsername: username,
+          refId: username
+        });
+      }
+    } catch (err) { /* signup already succeeded */ }
 
     res.json({
       success: true,
@@ -687,6 +713,18 @@ async function savePrivateMessage(room, sender, text) {
       reasons: flags.map((f) => f.label)
     });
   }
+  // Notify every other member of the room about the new message, so
+  // it shows up in their bell even when they aren't looking at chat.
+  for (const memberId of room.members || []) {
+    if (String(memberId) === String(sender._id)) continue;
+    await createNotification(memberId, {
+      type: "message",
+      title: roomDisplayName(room),
+      body: `${sender.username}: ${text.slice(0, 120)}`,
+      fromUsername: sender.username,
+      refId: String(room._id)
+    });
+  }
   room.updatedAt = new Date();
   await room.save();
   return { message, flags };
@@ -987,6 +1025,275 @@ app.post("/admin/chat/flags/:id/review", requireDb, requireAuth, requireAdmin, a
   }
 });
 
+// --- Notifications ----------------------------------------------------
+// Tap In had no notification system at all: no bell, no badge, no
+// alert for friend requests or messages. createNotification stores
+// one row per recipient in MongoDB (so it survives a restart) and
+// pushes it live over Socket.IO when the recipient is online, the
+// same live path as the who's-online dots.
+async function createNotification(userId, data) {
+  try {
+    const notification = await Notification.create({
+      userId,
+      type: data.type,
+      title: data.title || "",
+      body: data.body || "",
+      fromUsername: data.fromUsername || "",
+      refId: data.refId || ""
+    });
+    // Live push to the recipient's open sockets, if any.
+    try {
+      const sockets = typeof userSockets !== "undefined" ? userSockets.get(String(userId)) : null;
+      if (sockets) {
+        for (const sid of sockets) io.to(sid).emit("notification", publicNotification(notification));
+      }
+    } catch (err) { /* stored notification is the source of truth */ }
+    return notification;
+  } catch (err) {
+    // A notification must never break the action that caused it.
+    return null;
+  }
+}
+
+function publicNotification(n) {
+  return {
+    id: n._id,
+    type: n.type,
+    title: n.title,
+    body: n.body,
+    fromUsername: n.fromUsername || "",
+    refId: n.refId || "",
+    read: Boolean(n.read),
+    createdAt: n.createdAt
+  };
+}
+
+// GET /notifications — my notifications, newest first, plus the
+// unread count the bell badge uses. Logged-in only.
+app.get("/notifications", requireDb, requireAuth, async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 100);
+    const notifications = await Notification.find({ userId: req.user._id })
+      .sort({ createdAt: -1 })
+      .limit(limit);
+    const unreadCount = await Notification.countDocuments({ userId: req.user._id, read: false });
+    res.json({
+      success: true,
+      unreadCount,
+      notifications: notifications.map(publicNotification)
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /notifications/:id/read — mark one notification read.
+app.post("/notifications/:id/read", requireDb, requireAuth, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(404).json({ error: "Notification not found" });
+    const notification = await Notification.findOne({ _id: req.params.id, userId: req.user._id });
+    if (!notification) return res.status(404).json({ error: "Notification not found" });
+    notification.read = true;
+    await notification.save();
+    res.json({ success: true, notification: publicNotification(notification) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /live — who is broadcasting right now (room, username, since).
+app.get("/live", requireDb, requireAuth, async (req, res) => {
+  res.json({
+    success: true,
+    live: [...liveBroadcasts.values()].map((b) => ({
+      username: b.username,
+      room: b.room,
+      startedAt: b.startedAt
+    }))
+  });
+});
+
+// POST /notifications/read-all — mark all my notifications read.
+app.post("/notifications/read-all", requireDb, requireAuth, async (req, res) => {
+  try {
+    await Notification.updateMany(
+      { userId: req.user._id, read: false },
+      { $set: { read: true } }
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Friend requests -------------------------------------------------
+// Before this, "Add Friend" just wrote the other person's name into
+// the sender's own friends list — the other person was never told and
+// never saw anything, so a request looked like it vanished. Now
+// adding a friend sends a pending request to that person, stored in
+// MongoDB on their account. They see it at the top of their Friends
+// tab (same green-dot / last-seen treatment as online friends) with
+// Accept / Decline, and only an Accept makes you friends — both
+// ways, so each of you shows up in the other's list.
+
+function hasFriendRequest(user, username) {
+  return (user.friendRequests || []).some((r) => r.username === username);
+}
+
+function removeFriendRequest(user, username) {
+  user.friendRequests = (user.friendRequests || []).filter((r) => r.username !== username);
+}
+
+function addFriendBothWays(a, b) {
+  if (!a.friends.includes(b.username)) a.friends.push(b.username);
+  if (!b.friends.includes(a.username)) b.friends.push(a.username);
+}
+
+// Send a pending request to the target user. Shared by the
+// authenticated endpoint and the legacy /friends/add route.
+async function sendFriendRequest(sender, friendName) {
+  if (!friendName) return { status: 400, error: "Give the username to add" };
+  if (friendName === sender.username) return { status: 400, error: "You can't add yourself as a friend" };
+  if (sender.banned) return { status: 403, error: "This account has been banned" };
+  const target = await User.findOne({ username: friendName });
+  if (!target) return { status: 404, error: "No member with that username" };
+  if (target.banned) return { status: 400, error: "That account is not available" };
+  if ((sender.friends || []).includes(friendName)) {
+    return { status: 400, error: `${friendName} is already your friend` };
+  }
+  if (hasFriendRequest(target, sender.username)) {
+    return { status: 200, alreadySent: true, target };
+  }
+  // If they already sent YOU a request, accept that one instead of
+  // stacking a second request in the other direction.
+  if (hasFriendRequest(sender, friendName)) {
+    removeFriendRequest(sender, friendName);
+    addFriendBothWays(sender, target);
+    removeFriendRequest(target, sender.username);
+    await sender.save();
+    await target.save();
+    await createNotification(target._id, {
+      type: "friend_accepted",
+      title: "Friend request accepted",
+      body: `${sender.username} accepted your friend request — you're friends now.`,
+      fromUsername: sender.username,
+      refId: sender.username
+    });
+    return { status: 200, accepted: true, target };
+  }
+  target.friendRequests.push({ username: sender.username, userId: sender._id, createdAt: new Date() });
+  await target.save();
+  // The request must actually notify the other person — before this
+  // there was no notification at all, so requests sat unseen.
+  await createNotification(target._id, {
+    type: "friend_request",
+    title: "New friend request",
+    body: `${sender.username} wants to be your friend.`,
+    fromUsername: sender.username,
+    refId: sender.username
+  });
+  return { status: 200, requestSent: true, target };
+}
+
+// GET /friends/requests — my pending incoming requests, newest first,
+// each with the requester's online / last-seen status (same display
+// as the who's-online list). Logged-in only.
+app.get("/friends/requests", requireDb, requireAuth, async (req, res) => {
+  try {
+    const requests = [...(req.user.friendRequests || [])].sort(
+      (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+    );
+    const enriched = [];
+    for (const r of requests) {
+      const requester = r.userId
+        ? await User.findById(r.userId).select("_id username lastSeenAt")
+        : await User.findOne({ username: r.username }).select("_id username lastSeenAt");
+      enriched.push({
+        username: r.username,
+        userId: requester ? String(requester._id) : (r.userId ? String(r.userId) : null),
+        createdAt: r.createdAt || null,
+        online: requester ? onlineUserIds.has(String(requester._id)) : false,
+        lastSeenAt: requester ? (requester.lastSeenAt || null) : null
+      });
+    }
+    res.json({ success: true, requests: enriched });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /friends/request — send a friend request. Body: { "friendName": "username" }.
+app.post("/friends/request", requireDb, requireAuth, async (req, res) => {
+  try {
+    const friendName = typeof req.body?.friendName === "string" ? req.body.friendName.trim() : "";
+    const result = await sendFriendRequest(req.user, friendName);
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    if (result.accepted) {
+      return res.json({ success: true, accepted: true, friends: req.user.friends, message: `${friendName} had already sent you a request — you're friends now.` });
+    }
+    res.json({
+      success: true,
+      requestSent: true,
+      alreadySent: Boolean(result.alreadySent),
+      friends: req.user.friends,
+      message: result.alreadySent
+        ? `You already sent ${friendName} a friend request.`
+        : `Friend request sent to ${friendName}.`
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /friends/requests/:username/accept — accept a pending request.
+// Both users become friends; the pending request is cleared both ways.
+app.post("/friends/requests/:username/accept", requireDb, requireAuth, async (req, res) => {
+  try {
+    const username = req.params.username;
+    if (!hasFriendRequest(req.user, username)) {
+      return res.status(404).json({ error: "No friend request from that person" });
+    }
+    const other = await User.findOne({ username });
+    if (!other) {
+      removeFriendRequest(req.user, username);
+      await req.user.save();
+      return res.status(404).json({ error: "That account no longer exists" });
+    }
+    removeFriendRequest(req.user, username);
+    removeFriendRequest(other, req.user.username);
+    addFriendBothWays(req.user, other);
+    await req.user.save();
+    await other.save();
+    // Tell the person who sent the request that it was accepted.
+    await createNotification(other._id, {
+      type: "friend_accepted",
+      title: "Friend request accepted",
+      body: `${req.user.username} accepted your friend request — you're friends now.`,
+      fromUsername: req.user.username,
+      refId: req.user.username
+    });
+    res.json({ success: true, friends: req.user.friends, message: `You and ${username} are friends now.` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /friends/requests/:username/decline — decline a pending request.
+// The request is removed; nobody becomes friends.
+app.post("/friends/requests/:username/decline", requireDb, requireAuth, async (req, res) => {
+  try {
+    const username = req.params.username;
+    if (!hasFriendRequest(req.user, username)) {
+      return res.status(404).json({ error: "No friend request from that person" });
+    }
+    removeFriendRequest(req.user, username);
+    await req.user.save();
+    res.json({ success: true, message: `Declined ${username}'s friend request.` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/friends/add", requireDb, async (req, res) => {
   try {
     const { userId, friendName } = req.body;
@@ -994,13 +1301,17 @@ app.post("/friends/add", requireDb, async (req, res) => {
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ error: "User not found" });
 
-    if (!user.friends.includes(friendName)) {
-      user.friends.push(friendName);
-      await user.save();
-    }
-
+    // Legacy route (used by older clients): this used to instantly
+    // add the name to the sender's own list and tell nobody. It now
+    // sends a real friend request to the other person instead, so
+    // the request actually shows up for them.
+    const result = await sendFriendRequest(user, typeof friendName === "string" ? friendName.trim() : "");
+    if (result.error) return res.status(result.status).json({ error: result.error });
     res.json({
       success: true,
+      requestSent: true,
+      alreadySent: Boolean(result.alreadySent),
+      accepted: Boolean(result.accepted),
       friends: user.friends
     });
   } catch (err) {
@@ -1136,6 +1447,24 @@ async function markOnline(socketUser) {
     try { await User.updateOne({ _id: uid }, { $set: { lastSeenAt: new Date() } }); } catch (err) { /* ignore */ }
     const recipients = await presenceRecipients(uid);
     emitPresenceTo(recipients, { userId: uid, username: socketUser.username, online: true, lastSeenAt: new Date() });
+    // A friend just came online: notify the people who can see them
+    // — their friends, their DM/group partners, and the admin — so
+    // the bell lights up instead of the green dot being the only clue.
+    try {
+      const friendDocs = await User.find({ friends: socketUser.username }).select("_id");
+      const notifyIds = new Set(recipients);
+      for (const f of friendDocs) notifyIds.add(String(f._id));
+      notifyIds.delete(uid);
+      for (const notifyId of notifyIds) {
+        await createNotification(notifyId, {
+          type: "friend_online",
+          title: `${socketUser.username} is online`,
+          body: `${socketUser.username} just came online.`,
+          fromUsername: socketUser.username,
+          refId: socketUser.username
+        });
+      }
+    } catch (err) { /* presence must never break the connection */ }
   }
 }
 
@@ -1228,16 +1557,85 @@ io.on("connection", (socket) => {
     });
   });
 
-  socket.on("chat-message", (data) => {
+  socket.on("chat-message", async (data) => {
     // Global chat ONLY. Private rooms are never reachable through this
     // old open event — they use join-chat-room / private-chat-message
     // with membership checks. Anything else is ignored.
     if (!data || data.room !== "global") return;
+    const text = typeof data.message === "string" ? data.message : "";
+    // The sender's username comes from the authed socket when there
+    // is one, otherwise from the message itself (the global socket
+    // was anonymous before this — messages didn't even say who sent
+    // them). Include it in the broadcast so the room can see it.
+    const senderUsername = socket.user?.username || (typeof data.username === "string" ? data.username.trim() : "") || "";
     io.to(data.room).emit("chat-message", {
-      message: data.message,
+      message: text,
       from: socket.id,
+      username: senderUsername,
       timestamp: new Date()
     });
+    // Global chat notification: tell everyone who is online right
+    // now (except the sender) — a stored notification plus a live
+    // push, the same as every other notification. Offline members
+    // are NOT spammed with every global message.
+    if (!text.trim() || !senderUsername) return;
+    try {
+      const sender = await User.findOne({ username: senderUsername }).select("_id");
+      for (const onlineId of [...onlineUserIds]) {
+        if (sender && onlineId === String(sender._id)) continue;
+        await createNotification(onlineId, {
+          type: "message",
+          title: "Global chat",
+          body: `${senderUsername}: ${text.slice(0, 120)}`,
+          fromUsername: senderUsername,
+          refId: "global"
+        });
+      }
+    } catch (err) { /* chat already went out — notifications are a bonus */ }
+  });
+
+  // --- Going live -----------------------------------------------------
+  // "Go Live" is joining a video room with the camera on. The client
+  // emits "go-live" with the room name when the camera starts, and
+  // "stop-live" when it leaves. Everyone else gets a notification —
+  // "So-and-so just went live" — and tapping it opens that video room.
+  socket.on("go-live", async (data) => {
+    if (!socket.user) return;
+    const roomName = (typeof data?.room === "string" && data.room.trim()) || "global";
+    const key = roomName.toLowerCase();
+    const existing = liveBroadcasts.get(key);
+    if (existing && existing.userId === socket.user.id) return; // already live here
+    const broadcast = {
+      userId: socket.user.id,
+      username: socket.user.username,
+      room: key,
+      startedAt: new Date()
+    };
+    liveBroadcasts.set(key, broadcast);
+    io.emit("live-started", { username: broadcast.username, room: broadcast.room, startedAt: broadcast.startedAt });
+    try {
+      const everyone = await User.find({}).select("_id");
+      for (const u of everyone) {
+        if (String(u._id) === String(socket.user.id)) continue;
+        await createNotification(u._id, {
+          type: "live",
+          title: `${broadcast.username} just went live`,
+          body: `Tap to watch ${broadcast.username} live in video room "${broadcast.room}".`,
+          fromUsername: broadcast.username,
+          refId: broadcast.room
+        });
+      }
+    } catch (err) { /* live still started — notifications are a bonus */ }
+  });
+
+  socket.on("stop-live", () => {
+    if (!socket.user) return;
+    for (const [key, b] of liveBroadcasts) {
+      if (String(b.userId) === String(socket.user.id)) {
+        liveBroadcasts.delete(key);
+        io.emit("live-ended", { username: b.username, room: b.room });
+      }
+    }
   });
 
   // --- Private chats (Socket.IO live path) --------------------------
@@ -1316,6 +1714,15 @@ io.on("connection", (socket) => {
       socket.to(roomId).emit("user-left", socket.id);
     }
     if (socket.user) markOffline(socket.user);
+    // If they were live, they aren't anymore.
+    if (socket.user) {
+      for (const [key, b] of liveBroadcasts) {
+        if (String(b.userId) === String(socket.user.id)) {
+          liveBroadcasts.delete(key);
+          io.emit("live-ended", { username: b.username, room: b.room });
+        }
+      }
+    }
   });
 });
 

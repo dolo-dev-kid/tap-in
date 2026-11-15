@@ -171,7 +171,7 @@ export default function ChatPanel() {
     const text = username ? `${username}: ${input.trim()}` : input.trim();
     // Show it immediately, and send it to everyone in the room.
     setMessages((prev) => [...prev, { text, mine: true }]);
-    socket.emit("chat-message", { room: "global", message: text });
+    socket.emit("chat-message", { room: "global", message: text, username });
     setInput("");
   };
 
