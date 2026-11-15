@@ -1,39 +1,105 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import axiosInstance from "../api/axios";
 
-// Avatar is a local inline SVG (initial "D" on a gradient) — the old
-// Imgur URL (i.imgur.com/4ZQZ4ZQ.png) was a removed-image placeholder
-// (161x81 1-bit PNG), so the profile picture was always broken.
-const AVATAR_SVG =
-  "data:image/svg+xml," +
-  encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00eaff"/><stop offset="1" stop-color="#7b2fff"/></linearGradient></defs><circle cx="60" cy="60" r="60" fill="url(#g)"/><text x="60" y="82" font-family="Arial, sans-serif" font-size="64" font-weight="bold" fill="#0f0f0f" text-anchor="middle">D</text></svg>`
+// Profile shows the LOGGED-IN user's own data — never a template.
+// Display name is the account username (from localStorage, then from the
+// server). Logged out, it reads "New user". Bio defaults to empty with a
+// placeholder. Avatar is the first letter of the username on a gradient;
+// a saved avatar URL is used when the user set one.
+function avatarSvg(initial) {
+  const letter = (initial || "?").toUpperCase();
+  return (
+    "data:image/svg+xml," +
+    encodeURIComponent(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00eaff"/><stop offset="1" stop-color="#7b2fff"/></linearGradient></defs><circle cx="60" cy="60" r="60" fill="url(#g)"/><text x="60" y="82" font-family="Arial, sans-serif" font-size="64" font-weight="bold" fill="#0f0f0f" text-anchor="middle">${letter}</text></svg>`
+    )
   );
+}
+
+function authHeaders() {
+  return {
+    Authorization: `Bearer ${localStorage.getItem("token") || ""}`
+  };
+}
 
 export default function Profile() {
-  const username =
+  const storedUsername =
     typeof localStorage !== "undefined"
       ? localStorage.getItem("tapin_username")
       : null;
-  const [displayName, setDisplayName] = useState(
-    () => localStorage.getItem("tapin_display_name") || "DOLO45"
-  );
-  const [bio, setBio] = useState(
-    () =>
-      localStorage.getItem("tapin_bio") || "Streamer • Creator • Dreamer"
-  );
-  const [editing, setEditing] = useState(false);
-  const [nameInput, setNameInput] = useState(displayName);
-  const [bioInput, setBioInput] = useState(bio);
+  const userId =
+    typeof localStorage !== "undefined"
+      ? localStorage.getItem("tapin_user_id")
+      : null;
 
-  const save = () => {
-    const name = nameInput.trim() || "DOLO45";
+  const [displayName, setDisplayName] = useState(storedUsername || "New user");
+  const [bio, setBio] = useState("");
+  const [avatar, setAvatar] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [bioInput, setBioInput] = useState("");
+  const [avatarInput, setAvatarInput] = useState("");
+  const [note, setNote] = useState("");
+  const [loading, setLoading] = useState(Boolean(userId));
+
+  // Load the real profile from the server when logged in.
+  useEffect(() => {
+    if (!userId) return;
+    setLoading(true);
+    axiosInstance
+      .get(`/users/${userId}`)
+      .then((res) => {
+        if (res.data?.username) {
+          setDisplayName(res.data.username);
+          localStorage.setItem("tapin_username", res.data.username);
+        }
+        setBio(res.data?.bio || "");
+        setAvatar(res.data?.avatar || "");
+        setBioInput(res.data?.bio || "");
+        setAvatarInput(res.data?.avatar || "");
+      })
+      .catch(() => {
+        // Keep the local fallback (username from login) and say so below.
+        setNote("Could not load your saved profile — showing what's on this device.");
+      })
+      .finally(() => setLoading(false));
+  }, [userId]);
+
+  const save = async () => {
     const nextBio = bioInput.trim();
-    localStorage.setItem("tapin_display_name", name);
-    localStorage.setItem("tapin_bio", nextBio);
-    setDisplayName(name);
-    setBio(nextBio);
-    setEditing(false);
+    const nextAvatar = avatarInput.trim();
+    if (!userId) {
+      // Logged out: nothing to save to — keep it on this device only.
+      localStorage.setItem("tapin_bio", nextBio);
+      setBio(nextBio);
+      setAvatar(nextAvatar);
+      setEditing(false);
+      setNote("Saved on this device only — log in to save your profile to your account.");
+      return;
+    }
+    try {
+      const res = await axiosInstance.patch(
+        `/users/${userId}`,
+        { bio: nextBio, avatar: nextAvatar },
+        { headers: authHeaders() }
+      );
+      setBio(res.data?.bio || "");
+      setAvatar(res.data?.avatar || "");
+      setNote("");
+      setEditing(false);
+    } catch (err) {
+      // API failed: fall back to this device and say so plainly.
+      localStorage.setItem("tapin_bio", nextBio);
+      setBio(nextBio);
+      setAvatar(nextAvatar);
+      setEditing(false);
+      setNote(
+        "Could not save to your account right now — saved on this device only. Try again once you're back online."
+      );
+    }
   };
+
+  const initial = (displayName || "?").charAt(0);
+  const avatarSrc = avatar || avatarSvg(initial);
 
   return (
     <div style={{ padding: 40, color: "white" }}>
@@ -50,36 +116,48 @@ export default function Profile() {
         }}
       >
         <img
-          src={AVATAR_SVG}
+          src={avatarSrc}
           alt="avatar"
           style={{
             width: 120,
             height: 120,
             borderRadius: "50%",
-            marginBottom: 20
+            marginBottom: 20,
+            objectFit: "cover"
           }}
         />
 
         <h2>{displayName}</h2>
-        <p style={{ marginTop: 10 }}>{bio}</p>
+        {loading ? (
+          <p style={{ marginTop: 10, color: "#aaa" }}>Loading your profile…</p>
+        ) : bio ? (
+          <p style={{ marginTop: 10 }}>{bio}</p>
+        ) : (
+          <p style={{ marginTop: 10, color: "#aaa", fontStyle: "italic" }}>
+            No bio yet — tap Edit Profile to add one.
+          </p>
+        )}
         <p style={{ marginTop: 10, color: "#aaa", fontSize: 14 }}>
-          {username
-            ? `Logged in as ${username}`
+          {storedUsername
+            ? `Logged in as ${storedUsername}`
             : "Not logged in — log in to save your profile to your account."}
         </p>
+        {note && (
+          <p style={{ marginTop: 10, color: "#ffce54", fontSize: 14 }}>{note}</p>
+        )}
 
         {editing ? (
           <div style={{ marginTop: 20 }}>
             <input
-              value={nameInput}
-              onChange={(e) => setNameInput(e.target.value)}
-              placeholder="Display name"
-              style={input}
-            />
-            <input
               value={bioInput}
               onChange={(e) => setBioInput(e.target.value)}
               placeholder="Bio"
+              style={input}
+            />
+            <input
+              value={avatarInput}
+              onChange={(e) => setAvatarInput(e.target.value)}
+              placeholder="Avatar image URL (optional)"
               style={input}
             />
             <button onClick={save} style={btn}>
@@ -91,10 +169,6 @@ export default function Profile() {
             >
               Cancel
             </button>
-            <p style={{ marginTop: 10, color: "#aaa", fontSize: 13 }}>
-              Saved on this device for now — it syncs to your account once
-              you are logged in and the database is connected.
-            </p>
           </div>
         ) : (
           <button onClick={() => setEditing(true)} style={{ ...btn, marginTop: 20 }}>

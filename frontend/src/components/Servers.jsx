@@ -1,23 +1,35 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import axiosInstance from "../api/axios";
 
-// Create Server calls the real API. Without a login it says so plainly
-// instead of pretending to work; while the database is down the server's
-// 503 message is shown as-is.
+// Servers are the logged-in user's real servers from the database.
+// No sample servers.
 export default function Servers() {
-  const [servers, setServers] = useState([
-    "Creators Hub",
-    "Gamers Lounge",
-    "Music Zone"
-  ]);
+  const [servers, setServers] = useState([]);
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const userId =
+    typeof localStorage !== "undefined"
+      ? localStorage.getItem("tapin_user_id")
+      : null;
+
+  useEffect(() => {
+    if (!userId) return;
+    setLoading(true);
+    axiosInstance
+      .get(`/users/${userId}`)
+      .then((res) => setServers(res.data?.servers || []))
+      .catch(() => {
+        setMessage("Could not load your servers — please try again.");
+      })
+      .finally(() => setLoading(false));
+  }, [userId]);
 
   const createServer = async () => {
     const serverName = name.trim();
     if (!serverName) return;
-    const userId = localStorage.getItem("tapin_user_id");
     if (!userId) {
       setMessage("Log in first — servers are saved to your account.");
       return;
@@ -47,24 +59,28 @@ export default function Servers() {
   return (
     <div style={{ padding: 40, color: "white" }}>
       <h1>Your Servers</h1>
-      <p style={{ marginTop: 8, color: "#aaa", fontSize: 14 }}>
-        Sample servers below — your real servers appear once you log in and
-        the database is connected.
-      </p>
 
-      {servers.map((s, i) => (
-        <div
-          key={i}
-          style={{
-            background: "#1e1f22",
-            padding: 20,
-            borderRadius: 12,
-            marginTop: 20
-          }}
-        >
-          {s}
-        </div>
-      ))}
+      {loading ? (
+        <p style={{ marginTop: 20, color: "#aaa" }}>Loading your servers…</p>
+      ) : servers.length === 0 ? (
+        <p style={{ marginTop: 20, color: "#aaa" }}>
+          No servers yet — create your first one.
+        </p>
+      ) : (
+        servers.map((s, i) => (
+          <div
+            key={i}
+            style={{
+              background: "#1e1f22",
+              padding: 20,
+              borderRadius: 12,
+              marginTop: 20
+            }}
+          >
+            {s}
+          </div>
+        ))
+      )}
 
       <div style={{ marginTop: 30 }}>
         <input
