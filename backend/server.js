@@ -11,6 +11,10 @@ const { Server } = require("socket.io");
 const User = require("./models/User");
 const Post = require("./models/Post");
 const Upload = require("./models/Upload");
+const ChatRoom = require("./models/ChatRoom");
+const ChatMessage = require("./models/ChatMessage");
+const ChatFlag = require("./models/ChatFlag");
+const { scanChatMessage } = require("./chatFlags");
 
 const app = express();
 const server = http.createServer(app);
@@ -26,6 +30,12 @@ const io = new Server(server, {
     credentials: true
   }
 });
+
+// Video-chat room registry: socket ids per room name. This is ONLY a
+// live-connection registry — it is NOT where chats are stored. Private
+// chat rooms and messages live in MongoDB (ChatRoom / ChatMessage),
+// so a Render restart never loses anyone's chats.
+const rooms = {};
 
 // MongoDB Connection — do not crash the server if the DB is down / not configured.
 // Auth routes return 503 with a clear message until MongoDB is connected.
@@ -65,6 +75,11 @@ const jwtSecret = JWT_SECRET || "dev-only-change-me";
 // local: backend/.env) to the owner's Tap In username.
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "";
 function isOwnerUsername(username) {
+  // EXACT, case-sensitive match only: the owner is "Dolo45" (capital
+  // D). The lowercase account "dolo45" is a separate account that
+  // Wesley banned — it must NEVER get the admin role. Do not make
+  // this case-insensitive. The env var is the only source of the
+  // owner username; nothing is hardcoded here.
   return Boolean(ADMIN_USERNAME) && username === ADMIN_USERNAME;
 }
 
@@ -105,7 +120,11 @@ function publicUser(u) {
     banned: Boolean(u.banned),
     createdAt: u.createdAt,
     friendCount: (u.friends || []).length,
-    serverCount: (u.servers || []).length
+    serverCount: (u.servers || []).length,
+    // Online presence (admin list only): live "online now" from the
+    // socket counts, plus last seen from MongoDB.
+    online: typeof onlineUserIds !== "undefined" ? onlineUserIds.has(String(u._id)) : false,
+    lastSeenAt: u.lastSeenAt || null
   };
 }
 
@@ -594,6 +613,380 @@ app.get("/admin/uploads", requireDb, requireAuth, requireAdmin, async (req, res)
   }
 });
 
+// --- Private chats: 1-to-1 DMs and private groups -------------------
+// Rooms and messages live in MongoDB (ChatRoom / ChatMessage /
+// ChatFlag) — never in memory, never on Render's disk — so a Render
+// restart or spin-down never loses anyone's chats. Every route and
+// every socket event checks membership first: only members can see,
+// join, read or send in a room, and only an admin can review rooms
+// for safety. The global chat is untouched by all of this.
+
+function publicChatRoom(room, viewerId) {
+  const members = (room.memberUsernames || []).slice();
+  // DM display name: both members' usernames — the frontend shows the
+  // other person's name (it knows who "me" is).
+  const displayName = room.type === "group"
+    ? (room.name || "Group chat")
+    : (members.join(" & ") || "Private chat");
+  return {
+    id: room._id,
+    type: room.type,
+    name: room.name || "",
+    displayName,
+    members,
+    memberIds: (room.members || []).map(String),
+    createdBy: room.createdBy ? String(room.createdBy) : null,
+    createdAt: room.createdAt,
+    updatedAt: room.updatedAt
+  };
+}
+
+function publicChatMessage(m) {
+  return {
+    id: m._id,
+    room: String(m.room),
+    senderId: String(m.senderId),
+    senderUsername: m.senderUsername,
+    text: m.text,
+    flagged: Boolean(m.flagged),
+    flagReasons: m.flagReasons || [],
+    createdAt: m.createdAt
+  };
+}
+
+function isRoomMember(room, userId) {
+  return (room.members || []).some((m) => String(m) === String(userId));
+}
+
+function roomDisplayName(room) {
+  if (room.type === "group") return room.name || "Group chat";
+  return (room.memberUsernames || []).join(" & ") || "Private chat";
+}
+
+// Save a private message, run the safety scan, and store a flag (for
+// admin review only — never an auto-ban, never a block) when a
+// high-risk pattern matches. Returns { message, flags }.
+async function savePrivateMessage(room, sender, text) {
+  const flags = scanChatMessage(text);
+  const message = await ChatMessage.create({
+    room: room._id,
+    senderId: sender._id,
+    senderUsername: sender.username,
+    text,
+    flagged: flags.length > 0,
+    flagReasons: flags.map((f) => f.label)
+  });
+  if (flags.length > 0) {
+    await ChatFlag.create({
+      message: message._id,
+      room: room._id,
+      roomName: roomDisplayName(room),
+      senderId: sender._id,
+      senderUsername: sender.username,
+      text,
+      reasons: flags.map((f) => f.label)
+    });
+  }
+  room.updatedAt = new Date();
+  await room.save();
+  return { message, flags };
+}
+
+async function loadRoomOr404(req, res) {
+  if (!ObjectId.isValid(req.params.id)) {
+    res.status(404).json({ error: "Chat not found" });
+    return null;
+  }
+  const room = await ChatRoom.findById(req.params.id);
+  if (!room) {
+    res.status(404).json({ error: "Chat not found" });
+    return null;
+  }
+  return room;
+}
+
+// GET /users — find members by username (for starting a DM or adding
+// to a group). Logged-in only; returns id + username, never passwords.
+app.get("/users", requireDb, requireAuth, async (req, res) => {
+  try {
+    const q = typeof req.query.search === "string" ? req.query.search.trim() : "";
+    const filter = q
+      ? { username: { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" } }
+      : {};
+    const users = await User.find(filter).select("_id username role").sort({ username: 1 }).limit(20);
+    res.json({ success: true, users: users.map((u) => ({ id: u._id, username: u.username, role: u.role })) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /chat/presence — who's online among people you may see: your
+// DM/group partners and your friends. Strangers never appear here —
+// online status is only shared with people you already chat with, plus
+// the admin (who sees everyone in /admin/users).
+app.get("/chat/presence", requireDb, requireAuth, async (req, res) => {
+  try {
+    const roomsList = await ChatRoom.find({ members: req.user._id }).select("members memberUsernames");
+    const ids = new Set();
+    const names = new Set((req.user.friends || []).map(String));
+    for (const r of roomsList) {
+      for (const m of r.members || []) ids.add(String(m));
+      for (const n of r.memberUsernames || []) names.add(String(n));
+    }
+    ids.add(String(req.user._id));
+    const users = await User.find({ _id: { $in: [...ids] } }).select("_id username lastSeenAt");
+    const byName = new Map();
+    for (const u of users) byName.set(u.username, u);
+    const extra = [...names].filter((n) => !byName.has(n));
+    const extraUsers = extra.length ? await User.find({ username: { $in: extra } }).select("_id username lastSeenAt") : [];
+    const all = [...users, ...extraUsers];
+    res.json({
+      success: true,
+      presence: all.map((u) => ({
+        userId: String(u._id),
+        username: u.username,
+        online: onlineUserIds.has(String(u._id)),
+        lastSeenAt: u.lastSeenAt || null
+      }))
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /chat/rooms — rooms the logged-in user belongs to, newest first.
+app.get("/chat/rooms", requireDb, requireAuth, async (req, res) => {
+  try {
+    const roomsList = await ChatRoom.find({ members: req.user._id }).sort({ updatedAt: -1 }).limit(100);
+    res.json({ success: true, rooms: roomsList.map((r) => publicChatRoom(r, req.user._id)) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /chat/dm — start (or open the existing) 1-to-1 chat with a
+// member, by username. One DM thread per pair (deterministic dmKey).
+app.post("/chat/dm", requireDb, requireAuth, async (req, res) => {
+  try {
+    const username = typeof req.body?.username === "string" ? req.body.username.trim() : "";
+    if (!username) return res.status(400).json({ error: "Give the username to chat with" });
+    if (username === req.user.username) return res.status(400).json({ error: "You can't DM yourself" });
+    const other = await User.findOne({ username });
+    if (!other) return res.status(404).json({ error: "No member with that username" });
+    const ids = [String(req.user._id), String(other._id)].sort();
+    const dmKey = ids.join("_");
+    let room = await ChatRoom.findOne({ dmKey });
+    if (!room) {
+      room = await ChatRoom.create({
+        type: "dm",
+        dmKey,
+        members: [req.user._id, other._id],
+        memberUsernames: [req.user.username, other.username],
+        createdBy: req.user._id
+      });
+    }
+    res.json({ success: true, room: publicChatRoom(room, req.user._id) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /chat/groups — create a named private group. Body:
+// { "name": "My people", "members": ["username1", "username2"] }.
+// The creator is always a member. Only members can see or join it.
+app.post("/chat/groups", requireDb, requireAuth, async (req, res) => {
+  try {
+    const name = typeof req.body?.name === "string" ? req.body.name.trim().slice(0, 80) : "";
+    if (!name) return res.status(400).json({ error: "Give the group a name" });
+    const wanted = Array.isArray(req.body?.members) ? req.body.members : [];
+    const usernames = [...new Set(wanted.map((m) => String(m).trim()).filter(Boolean))].filter((u) => u !== req.user.username).slice(0, 49);
+    const found = usernames.length ? await User.find({ username: { $in: usernames } }) : [];
+    const foundNames = found.map((u) => u.username);
+    const missing = usernames.filter((u) => !foundNames.includes(u));
+    if (missing.length) {
+      return res.status(404).json({ error: `No member with username: ${missing.join(", ")}` });
+    }
+    const room = await ChatRoom.create({
+      type: "group",
+      name,
+      members: [req.user._id, ...found.map((u) => u._id)],
+      memberUsernames: [req.user.username, ...foundNames],
+      createdBy: req.user._id
+    });
+    res.json({ success: true, room: publicChatRoom(room, req.user._id) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /chat/rooms/:id/messages — history for a room. Members only.
+app.get("/chat/rooms/:id/messages", requireDb, requireAuth, async (req, res) => {
+  try {
+    const room = await loadRoomOr404(req, res);
+    if (!room) return;
+    if (!isRoomMember(room, req.user._id)) {
+      return res.status(403).json({ error: "You are not a member of this chat" });
+    }
+    const messages = await ChatMessage.find({ room: room._id }).sort({ createdAt: 1 }).limit(200);
+    res.json({ success: true, room: publicChatRoom(room, req.user._id), messages: messages.map(publicChatMessage) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /chat/rooms/:id/messages — send in a room. Members only.
+// Text up to 1000 characters. Saved to MongoDB, safety-scanned, and
+// broadcast live to the room's members over Socket.IO.
+app.post("/chat/rooms/:id/messages", requireDb, requireAuth, async (req, res) => {
+  try {
+    const room = await loadRoomOr404(req, res);
+    if (!room) return;
+    if (!isRoomMember(room, req.user._id)) {
+      return res.status(403).json({ error: "You are not a member of this chat" });
+    }
+    const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+    if (!text) return res.status(400).json({ error: "Write a message first" });
+    if (text.length > 1000) return res.status(400).json({ error: "Messages must be 1000 characters or fewer" });
+    const { message } = await savePrivateMessage(room, req.user, text);
+    io.to(`chat:${room._id}`).emit("private-chat-message", publicChatMessage(message));
+    res.json({ success: true, message: publicChatMessage(message) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /chat/rooms/:id/members — add a member to a group. Only the
+// group creator or an admin can add people.
+app.post("/chat/rooms/:id/members", requireDb, requireAuth, async (req, res) => {
+  try {
+    const room = await loadRoomOr404(req, res);
+    if (!room) return;
+    if (room.type !== "group") return res.status(400).json({ error: "You can only add members to a group chat" });
+    const isCreator = String(room.createdBy) === String(req.user._id);
+    if (!isCreator && req.user.role !== "admin") {
+      return res.status(403).json({ error: "Only the group creator can add members" });
+    }
+    const username = typeof req.body?.username === "string" ? req.body.username.trim() : "";
+    if (!username) return res.status(400).json({ error: "Give the username to add" });
+    const user = await User.findOne({ username });
+    if (!user) return res.status(404).json({ error: "No member with that username" });
+    if (isRoomMember(room, user._id)) return res.status(400).json({ error: `${username} is already in this group` });
+    room.members.push(user._id);
+    room.memberUsernames.push(user.username);
+    room.updatedAt = new Date();
+    await room.save();
+    res.json({ success: true, room: publicChatRoom(room, req.user._id) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /chat/rooms/:id/members/:userId — remove a member from a
+// group, or leave the group yourself. The creator or an admin can
+// remove others; anyone can remove themselves. DMs can't lose members.
+app.delete("/chat/rooms/:id/members/:userId", requireDb, requireAuth, async (req, res) => {
+  try {
+    const room = await loadRoomOr404(req, res);
+    if (!room) return;
+    if (room.type !== "group") return res.status(400).json({ error: "You can't leave a 1-to-1 chat — delete it from your list instead" });
+    const targetId = req.params.userId;
+    const isSelf = String(targetId) === String(req.user._id);
+    const isCreator = String(room.createdBy) === String(req.user._id);
+    if (!isSelf && !isCreator && req.user.role !== "admin") {
+      return res.status(403).json({ error: "Only the group creator can remove members" });
+    }
+    if (!isRoomMember(room, targetId)) return res.status(404).json({ error: "That person is not in this group" });
+    const idx = room.members.findIndex((m) => String(m) === String(targetId));
+    room.members.splice(idx, 1);
+    room.memberUsernames.splice(idx, 1);
+    room.updatedAt = new Date();
+    await room.save();
+    res.json({ success: true, room: publicChatRoom(room, req.user._id) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Admin safety monitor (private chats) ---------------------------
+// Admin only. The owner can list every private room, read a room's
+// history for safety review, and see + mark safety flags. This is
+// moderation for the owner's own app — it never exposes private
+// messages to non-admin users.
+
+// GET /admin/chat/rooms — every private room, with member names and
+// message counts, newest activity first.
+app.get("/admin/chat/rooms", requireDb, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const roomsList = await ChatRoom.find({}).sort({ updatedAt: -1 }).limit(100);
+    const roomsOut = [];
+    for (const room of roomsList) {
+      const messageCount = await ChatMessage.countDocuments({ room: room._id });
+      roomsOut.push({ ...publicChatRoom(room, req.user._id), messageCount });
+    }
+    res.json({ success: true, rooms: roomsOut });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /admin/chat/rooms/:id/messages — a room's full history, admin only.
+app.get("/admin/chat/rooms/:id/messages", requireDb, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const room = await loadRoomOr404(req, res);
+    if (!room) return;
+    const messages = await ChatMessage.find({ room: room._id }).sort({ createdAt: 1 }).limit(200);
+    res.json({ success: true, room: publicChatRoom(room, req.user._id), messages: messages.map(publicChatMessage) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /admin/chat/flags — safety flags, newest first. ?reviewed=true
+// or ?reviewed=false filters; unreviewed first by default.
+app.get("/admin/chat/flags", requireDb, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const filter = {};
+    if (req.query.reviewed === "true") filter.reviewed = true;
+    if (req.query.reviewed === "false") filter.reviewed = false;
+    const flags = await ChatFlag.find(filter).sort({ createdAt: -1 }).limit(100);
+    res.json({
+      success: true,
+      flags: flags.map((f) => ({
+        id: f._id,
+        message: String(f.message),
+        room: String(f.room),
+        roomName: f.roomName,
+        senderId: f.senderId ? String(f.senderId) : null,
+        senderUsername: f.senderUsername,
+        text: f.text,
+        reasons: f.reasons,
+        reviewed: Boolean(f.reviewed),
+        reviewNote: f.reviewNote || "",
+        createdAt: f.createdAt
+      }))
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /admin/chat/flags/:id/review — mark a flag reviewed (admin
+// only). Body: { "reviewed": true, "note": "..." }. A flag is only a
+// "look at this" — reviewing it bans nobody by itself.
+app.post("/admin/chat/flags/:id/review", requireDb, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(404).json({ error: "Flag not found" });
+    const flag = await ChatFlag.findById(req.params.id);
+    if (!flag) return res.status(404).json({ error: "Flag not found" });
+    if (typeof req.body?.reviewed === "boolean") flag.reviewed = req.body.reviewed;
+    if (typeof req.body?.note === "string") flag.reviewNote = req.body.note.slice(0, 500);
+    await flag.save();
+    res.json({ success: true, flag: { id: flag._id, reviewed: flag.reviewed, reviewNote: flag.reviewNote } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/friends/add", requireDb, async (req, res) => {
   try {
     const { userId, friendName } = req.body;
@@ -698,10 +1091,108 @@ app.post("/admin/users/:id/ban", requireDb, requireAuth, requireAdmin, async (re
 });
 
 // Socket.IO Events
+// --- Online presence --------------------------------------------------
+// Live "online now" is kept in memory here: userId -> number of open
+// sockets (so two tabs / two devices both count, and a user stays
+// online until their LAST socket closes). lastSeenAt is also written
+// to MongoDB (User.lastSeenAt) on disconnect, so it survives a
+// restart. Presence is NEVER broadcast to strangers: updates go only
+// to people who share a DM/group with that user, plus admins.
+const onlineSocketCounts = new Map(); // userId -> open socket count
+const onlineUserIds = new Set(); // userIds with >= 1 open socket
+const userSockets = new Map(); // userId -> Set<socket id>
+
+async function presenceRecipients(userId) {
+  // Everyone who may see this user's online status: DM/group partners
+  // and admins. Returns a Set of userIds (strings).
+  const out = new Set([String(userId)]);
+  try {
+    const roomsList = await ChatRoom.find({ members: userId }).select("members");
+    for (const r of roomsList) {
+      for (const m of r.members || []) out.add(String(m));
+    }
+    const admins = await User.find({ role: "admin" }).select("_id");
+    for (const a of admins) out.add(String(a._id));
+  } catch (err) { /* presence must never break chat */ }
+  return out;
+}
+
+function emitPresenceTo(userIds, payload) {
+  for (const uid of userIds) {
+    const sockets = userSockets.get(String(uid));
+    if (!sockets) continue;
+    for (const sid of sockets) io.to(sid).emit("presence", payload);
+  }
+}
+
+async function markOnline(socketUser) {
+  const uid = String(socketUser.id);
+  onlineSocketCounts.set(uid, (onlineSocketCounts.get(uid) || 0) + 1);
+  const wasOnline = onlineUserIds.has(uid);
+  onlineUserIds.add(uid);
+  if (!userSockets.has(uid)) userSockets.set(uid, new Set());
+  userSockets.get(uid).add(socketUser.socketId);
+  if (!wasOnline) {
+    try { await User.updateOne({ _id: uid }, { $set: { lastSeenAt: new Date() } }); } catch (err) { /* ignore */ }
+    const recipients = await presenceRecipients(uid);
+    emitPresenceTo(recipients, { userId: uid, username: socketUser.username, online: true, lastSeenAt: new Date() });
+  }
+}
+
+async function markOffline(socketUser) {
+  const uid = String(socketUser.id);
+  const remaining = (onlineSocketCounts.get(uid) || 1) - 1;
+  if (remaining > 0) {
+    onlineSocketCounts.set(uid, remaining);
+  } else {
+    onlineSocketCounts.delete(uid);
+    onlineUserIds.delete(uid);
+  }
+  const set = userSockets.get(uid);
+  if (set) {
+    set.delete(socketUser.socketId);
+    if (!set.size) userSockets.delete(uid);
+  }
+  if (remaining <= 0) {
+    const now = new Date();
+    try { await User.updateOne({ _id: uid }, { $set: { lastSeenAt: now } }); } catch (err) { /* ignore */ }
+    const recipients = await presenceRecipients(uid);
+    emitPresenceTo(recipients, { userId: uid, username: socketUser.username, online: false, lastSeenAt: now });
+  }
+}
+
+// Socket auth: a JWT in handshake auth identifies the logged-in user.
+// Unauthenticated sockets are still allowed (global chat and video
+// rooms worked that way before) — they just get socket.user = null
+// and can never join, read or send in a private chat.
+io.use((socket, next) => {
+  const token = socket.handshake?.auth?.token || socket.handshake?.query?.token;
+  if (!token) {
+    socket.user = null;
+    return next();
+  }
+  try {
+    const decoded = jwt.verify(token, jwtSecret);
+    socket.user = { id: String(decoded.id), username: decoded.username, role: decoded.role };
+    next();
+  } catch (err) {
+    socket.user = null;
+    next();
+  }
+});
+
 io.on("connection", (socket) => {
   console.log("✅ User connected:", socket.id);
+  if (socket.user) {
+    socket.user.socketId = socket.id;
+    markOnline(socket.user);
+  }
 
   socket.on("join-room", (roomId) => {
+    // Private chat rooms live under the "chat:<id>" namespace and are
+    // guarded by join-chat-room — never let the open video-room join
+    // sneak into them.
+    if (typeof roomId === "string" && roomId.startsWith("chat:")) return;
     if (!rooms[roomId]) {
       rooms[roomId] = [];
     }
@@ -738,11 +1229,76 @@ io.on("connection", (socket) => {
   });
 
   socket.on("chat-message", (data) => {
+    // Global chat ONLY. Private rooms are never reachable through this
+    // old open event — they use join-chat-room / private-chat-message
+    // with membership checks. Anything else is ignored.
+    if (!data || data.room !== "global") return;
     io.to(data.room).emit("chat-message", {
       message: data.message,
       from: socket.id,
       timestamp: new Date()
     });
+  });
+
+  // --- Private chats (Socket.IO live path) --------------------------
+  // join-chat-room: verify the logged-in user is a member (in MongoDB)
+  // before letting their socket into the room. Non-members get a
+  // "chat-error" and never see a single message.
+  socket.on("join-chat-room", async (roomId) => {
+    if (!socket.user) {
+      socket.emit("chat-error", { error: "Log in to join a private chat" });
+      return;
+    }
+    try {
+      if (!ObjectId.isValid(roomId)) {
+        socket.emit("chat-error", { error: "Chat not found" });
+        return;
+      }
+      const room = await ChatRoom.findById(roomId);
+      if (!room || !isRoomMember(room, socket.user.id)) {
+        socket.emit("chat-error", { error: "You are not a member of this chat" });
+        return;
+      }
+      socket.join(`chat:${roomId}`);
+      socket.emit("joined-chat-room", { roomId: String(roomId) });
+    } catch (err) {
+      socket.emit("chat-error", { error: "Could not join that chat" });
+    }
+  });
+
+  // private-chat-message: membership-checked, saved to MongoDB,
+  // safety-scanned, then broadcast only to the room's member sockets.
+  socket.on("private-chat-message", async (data) => {
+    if (!socket.user) {
+      socket.emit("chat-error", { error: "Log in to send a private message" });
+      return;
+    }
+    try {
+      const roomId = data?.roomId;
+      const text = typeof data?.text === "string" ? data.text.trim() : "";
+      if (!roomId || !ObjectId.isValid(roomId)) {
+        socket.emit("chat-error", { error: "Chat not found" });
+        return;
+      }
+      if (!text || text.length > 1000) {
+        socket.emit("chat-error", { error: "Messages must be 1–1000 characters" });
+        return;
+      }
+      const room = await ChatRoom.findById(roomId);
+      if (!room || !isRoomMember(room, socket.user.id)) {
+        socket.emit("chat-error", { error: "You are not a member of this chat" });
+        return;
+      }
+      const sender = await User.findById(socket.user.id);
+      if (!sender || sender.banned) {
+        socket.emit("chat-error", { error: "This account cannot send messages" });
+        return;
+      }
+      const { message } = await savePrivateMessage(room, sender, text);
+      io.to(`chat:${roomId}`).emit("private-chat-message", publicChatMessage(message));
+    } catch (err) {
+      socket.emit("chat-error", { error: "Could not send that message" });
+    }
   });
 
   socket.on("stream-data", (data) => {
@@ -759,6 +1315,7 @@ io.on("connection", (socket) => {
       rooms[roomId] = rooms[roomId].filter((id) => id !== socket.id);
       socket.to(roomId).emit("user-left", socket.id);
     }
+    if (socket.user) markOffline(socket.user);
   });
 });
 

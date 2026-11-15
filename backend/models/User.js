@@ -41,6 +41,14 @@ const UserSchema = new mongoose.Schema({
     filename: { type: String, default: "" },
     mimeType: { type: String, default: "" }
   },
+  // Online presence: last time this account was seen connected.
+  // Stored in MongoDB so it survives a Render restart. Live "online
+  // now" state is kept in memory on the backend (socket counts) — see
+  // the Socket.IO section. Never a location, only online / last seen.
+  lastSeenAt: {
+    type: Date,
+    default: null
+  },
   friends: {
     type: [String],
     default: []

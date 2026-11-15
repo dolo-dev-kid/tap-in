@@ -10,6 +10,10 @@ import axiosInstance from "../api/axios";
 export default function AdminPanel() {
   const [users, setUsers] = useState([]);
   const [uploads, setUploads] = useState([]);
+  const [flags, setFlags] = useState([]);
+  const [chatRooms, setChatRooms] = useState([]);
+  const [viewingRoom, setViewingRoom] = useState(null);
+  const [roomMessages, setRoomMessages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -40,6 +44,53 @@ export default function AdminPanel() {
     }
   };
 
+  const loadFlags = async () => {
+    try {
+      const res = await axiosInstance.get("/admin/chat/flags", {
+        headers: authHeaders()
+      });
+      setFlags(res.data.flags || []);
+    } catch (err) {
+      // Flags list is secondary — users list already reports auth errors.
+    }
+  };
+
+  const loadChatRooms = async () => {
+    try {
+      const res = await axiosInstance.get("/admin/chat/rooms", {
+        headers: authHeaders()
+      });
+      setChatRooms(res.data.rooms || []);
+    } catch (err) {
+      // Chat rooms list is secondary — users list already reports auth errors.
+    }
+  };
+
+  const viewRoomMessages = async (room) => {
+    try {
+      const res = await axiosInstance.get(`/admin/chat/rooms/${room.id}/messages`, {
+        headers: authHeaders()
+      });
+      setViewingRoom(room);
+      setRoomMessages(res.data.messages || []);
+    } catch (err) {
+      setError(err.response?.data?.error || "Could not open that chat");
+    }
+  };
+
+  const markFlagReviewed = async (flag, reviewed) => {
+    try {
+      await axiosInstance.post(
+        `/admin/chat/flags/${flag.id}/review`,
+        { reviewed },
+        { headers: authHeaders() }
+      );
+      loadFlags();
+    } catch (err) {
+      setError(err.response?.data?.error || "Could not update that flag");
+    }
+  };
+
   const loadUploads = async () => {
     try {
       const res = await axiosInstance.get("/admin/uploads", {
@@ -66,6 +117,12 @@ export default function AdminPanel() {
   useEffect(() => {
     loadUsers();
     loadUploads();
+    loadFlags();
+    loadChatRooms();
+    // Refresh the users list every 30 seconds so "online now" stays
+    // current while the admin panel is open.
+    const timer = setInterval(loadUsers, 30000);
+    return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -120,6 +177,12 @@ export default function AdminPanel() {
         </p>
       )}
 
+      <p style={{ marginTop: 16, color: "#7CFC9A", fontSize: 15 }}>
+        🟢 {users.filter((u) => u.online).length} online now
+        {" · "}
+        <span style={{ color: "#aaa" }}>{users.length} total accounts</span>
+      </p>
+
       {loading ? (
         <p style={{ marginTop: 20 }}>Loading users…</p>
       ) : users.length === 0 ? (
@@ -143,6 +206,7 @@ export default function AdminPanel() {
               >
                 <div style={{ flex: 1, minWidth: 180 }}>
                   <div style={{ fontWeight: "bold", fontSize: 16 }}>
+                    {u.online ? "🟢 " : "⚫ "}
                     {u.username}
                     {isMe && (
                       <span style={{ color: "#00eaff", fontSize: 12 }}> (you)</span>
@@ -152,6 +216,14 @@ export default function AdminPanel() {
                     Role: <strong style={{ color: u.role === "admin" ? "#00eaff" : "#fff" }}>{u.role}</strong>
                     {u.banned && (
                       <span style={{ color: "#ff6b6b" }}> · 🚫 Banned</span>
+                    )}
+                    {" · "}
+                    {u.online ? (
+                      <span style={{ color: "#7CFC9A" }}>Online now</span>
+                    ) : u.lastSeenAt ? (
+                      <span>Last seen {new Date(u.lastSeenAt).toLocaleString()}</span>
+                    ) : (
+                      <span>Never seen online</span>
                     )}
                     {" · "}
                     {u.friendCount} friend{u.friendCount === 1 ? "" : "s"} ·{" "}
@@ -200,6 +272,122 @@ export default function AdminPanel() {
       <button onClick={loadUsers} style={{ ...btn, marginTop: 20 }}>
         Refresh list
       </button>
+
+      <h2 style={{ marginTop: 40 }}>🚨 Safety — flagged chats</h2>
+      <p style={{ marginTop: 10, color: "#aaa", fontSize: 14 }}>
+        Messages the safety scan flagged for your review — grooming or
+        sexual content involving minors, threats, drug dealing, or
+        planning violence. A flag bans nobody by itself: you look at it
+        and decide. Mark it reviewed once you've handled it.
+      </p>
+      {flags.length === 0 ? (
+        <p style={{ marginTop: 16, color: "#aaa" }}>No flagged messages — nothing to review right now.</p>
+      ) : (
+        <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+          {flags.map((f) => (
+            <div
+              key={f.id}
+              style={{
+                background: f.reviewed ? "#1e1f22" : "#3a1a1a",
+                padding: 16,
+                borderRadius: 12,
+                opacity: f.reviewed ? 0.7 : 1
+              }}
+            >
+              <div style={{ fontWeight: "bold", fontSize: 15 }}>
+                {(f.reasons || []).join(" · ")}
+                {f.reviewed && <span style={{ color: "#7CFC9A" }}> · ✓ Reviewed</span>}
+              </div>
+              <div style={{ color: "#fff", fontSize: 14, marginTop: 6 }}>
+                "{f.text}"
+              </div>
+              <div style={{ color: "#aaa", fontSize: 13, marginTop: 6 }}>
+                by <strong style={{ color: "#fff" }}>{f.senderUsername}</strong>
+                {" · "}in {f.roomName || "a private chat"}
+                {" · "}{f.createdAt ? new Date(f.createdAt).toLocaleString() : "—"}
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                <button
+                  onClick={() => {
+                    const room = chatRooms.find((r) => String(r.id) === String(f.room));
+                    if (room) viewRoomMessages(room);
+                  }}
+                  style={btn}
+                >
+                  View chat
+                </button>
+                <button
+                  onClick={() => markFlagReviewed(f, !f.reviewed)}
+                  style={btn}
+                >
+                  {f.reviewed ? "Mark unreviewed" : "Mark reviewed"}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <button onClick={loadFlags} style={{ ...btn, marginTop: 16 }}>
+        Refresh flags
+      </button>
+
+      <h2 style={{ marginTop: 40 }}>💬 Private chats (safety review)</h2>
+      <p style={{ marginTop: 10, color: "#aaa", fontSize: 14 }}>
+        Every private 1-to-1 and group chat on Tap In, newest activity
+        first. Open one to read its history when you need to check on
+        something. Only you (the owner) can see these — other members
+        only ever see their own chats.
+      </p>
+      {chatRooms.length === 0 ? (
+        <p style={{ marginTop: 16, color: "#aaa" }}>No private chats yet.</p>
+      ) : (
+        <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+          {chatRooms.map((r) => (
+            <div
+              key={r.id}
+              style={{ background: "#1e1f22", padding: 16, borderRadius: 12, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}
+            >
+              <div style={{ flex: 1, minWidth: 180 }}>
+                <div style={{ fontWeight: "bold", fontSize: 15 }}>
+                  {r.type === "group" ? `👥 ${r.name}` : `🔒 ${r.displayName}`}
+                </div>
+                <div style={{ color: "#aaa", fontSize: 13, marginTop: 4 }}>
+                  {(r.members || []).join(", ")} · {r.messageCount || 0} message{(r.messageCount || 0) === 1 ? "" : "s"}
+                </div>
+              </div>
+              <button onClick={() => viewRoomMessages(r)} style={btn}>
+                View chat
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {viewingRoom && (
+        <div style={{ marginTop: 20, background: "#1e1f22", padding: 16, borderRadius: 12 }}>
+          <h3>
+            {viewingRoom.type === "group" ? viewingRoom.name : viewingRoom.displayName}
+            <button onClick={() => setViewingRoom(null)} style={{ ...btn, marginLeft: 12 }}>
+              Close
+            </button>
+          </h3>
+          <div style={{ marginTop: 12, maxHeight: 300, overflowY: "auto" }}>
+            {roomMessages.length === 0 ? (
+              <p style={{ color: "#aaa" }}>No messages in this chat.</p>
+            ) : (
+              roomMessages.map((m) => (
+                <div key={m.id} style={{ marginBottom: 10 }}>
+                  <strong>{m.senderUsername}</strong>
+                  <span style={{ color: "#777", fontSize: 12 }}>
+                    {" "}{m.createdAt ? new Date(m.createdAt).toLocaleString() : ""}
+                    {m.flagged ? " · 🚩 flagged" : ""}
+                  </span>
+                  <div>{m.text}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
 
       <h2 style={{ marginTop: 40 }}>📁 Uploads</h2>
       <p style={{ marginTop: 10, color: "#aaa", fontSize: 14 }}>

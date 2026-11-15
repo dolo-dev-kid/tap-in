@@ -5,6 +5,7 @@ import axiosInstance from "../api/axios";
 // No sample friends.
 export default function Friends({ onNavigate }) {
   const [friends, setFriends] = useState([]);
+  const [presence, setPresence] = useState({}); // username -> { online, lastSeenAt }
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -17,6 +18,18 @@ export default function Friends({ onNavigate }) {
 
   useEffect(() => {
     if (!userId) return;
+    // Online dots for friends (only friends you already added can
+    // see your status, and vice versa — never strangers).
+    axiosInstance
+      .get("/chat/presence", {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token") || ""}` }
+      })
+      .then((res) => {
+        const map = {};
+        for (const p of res.data?.presence || []) map[p.username] = p;
+        setPresence(map);
+      })
+      .catch(() => { /* presence is a bonus */ });
     setLoading(true);
     axiosInstance
       .get(`/users/${userId}`)
@@ -80,7 +93,15 @@ export default function Friends({ onNavigate }) {
               alignItems: "center"
             }}
           >
-            <span>{friend}</span>
+            <span>
+              {presence[friend]?.online ? "🟢 " : "⚫ "}
+              {friend}
+              {presence[friend] && !presence[friend].online && presence[friend].lastSeenAt && (
+                <span style={{ color: "#777", fontSize: 12 }}>
+                  {" "}· last seen {new Date(presence[friend].lastSeenAt).toLocaleDateString()}
+                </span>
+              )}
+            </span>
             <button
               onClick={() => onNavigate && onNavigate("video")}
               title="Open a video room to call"
