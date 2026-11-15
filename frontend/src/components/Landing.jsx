@@ -3,6 +3,14 @@ import axiosInstance from "../api/axios";
 
 export default function Landing() {
   const [health, setHealth] = useState(null);
+  const loggedInUsername =
+    typeof localStorage !== "undefined"
+      ? localStorage.getItem("tapin_username")
+      : null;
+  const isLoggedIn =
+    typeof localStorage !== "undefined" &&
+    !!localStorage.getItem("token") &&
+    !!loggedInUsername;
 
   useEffect(() => {
     axiosInstance
@@ -44,35 +52,41 @@ export default function Landing() {
         </div>
       </div>
 
-      <div style={{ marginTop: 30, display: "flex", gap: 12 }}>
-        <a
-          href="#/login"
-          style={{
-            padding: "14px 32px",
-            borderRadius: 10,
-            background: "#00eaff",
-            color: "black",
-            fontWeight: "bold",
-            textDecoration: "none"
-          }}
-        >
-          Log in
-        </a>
-        <a
-          href="#/register"
-          style={{
-            padding: "14px 32px",
-            borderRadius: 10,
-            background: "#2b2d31",
-            color: "white",
-            fontWeight: "bold",
-            textDecoration: "none",
-            border: "1px solid #00eaff"
-          }}
-        >
-          Sign up
-        </a>
-      </div>
+      {isLoggedIn ? (
+        <div style={{ marginTop: 30, fontSize: 18 }}>
+          Welcome back, <b style={{ color: "#00eaff" }}>{loggedInUsername}</b> — you're logged in.
+        </div>
+      ) : (
+        <div style={{ marginTop: 30, display: "flex", gap: 12 }}>
+          <a
+            href="#/login"
+            style={{
+              padding: "14px 32px",
+              borderRadius: 10,
+              background: "#00eaff",
+              color: "black",
+              fontWeight: "bold",
+              textDecoration: "none"
+            }}
+          >
+            Log in
+          </a>
+          <a
+            href="#/register"
+            style={{
+              padding: "14px 32px",
+              borderRadius: 10,
+              background: "#2b2d31",
+              color: "white",
+              fontWeight: "bold",
+              textDecoration: "none",
+              border: "1px solid #00eaff"
+            }}
+          >
+            Sign up
+          </a>
+        </div>
+      )}
 
       <p style={{ marginTop: 16, color: "#aaa", fontSize: 14 }}>{dbStatus}</p>
 
