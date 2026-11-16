@@ -7,15 +7,17 @@ import ShareTapIn from "./ShareTapIn";
 import SocialLinksRow, { SOCIAL_PLATFORMS } from "./SocialLinks";
 import VerifiedBadge from "./VerifiedBadge";
 import EmailVerification from "./EmailVerification";
-import { DOLO45_IG } from "../data/dolo45Photos";
+import { DOLO45_STUDIO_AI_AVATAR } from "../data/dolo45Photos";
 
-// Dolo45's profile pic is his real Instagram profile pic
-// (@nho_life_dolo45), shipped as a data URI in dolo45Photos.js. Used
-// ONLY as the fallback for the exact username "Dolo45"
+// Dolo45's profile pic is the AI studio pic (AI-generated recording
+// booth, Pittsburgh skyline), shipped as a data URI in dolo45Photos.js.
+// Wesley said 16 Nov 2026 he never sent the real photos, so the real
+// Instagram profile pic was REMOVED. Used ONLY as the fallback for the
+// exact username "Dolo45"
 // (case-sensitive — the separate banned lowercase "dolo45" account
 // never gets it). A saved avatar on his account always wins over
 // this fallback.
-export const DOLO45_AVATAR = DOLO45_IG;
+export const DOLO45_AVATAR = DOLO45_STUDIO_AI_AVATAR;
 
 // Profile shows the LOGGED-IN user's own data — never a template.
 // Display name is the account username (from localStorage, then from the

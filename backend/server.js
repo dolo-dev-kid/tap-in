@@ -186,8 +186,10 @@ function requireOwner(req, res, next) {
   next();
 }
 
-// Dolo45's profile pic is his real Instagram profile pic
-// (@nho_life_dolo45), shipped as a data URI in dolo45Avatar.js. Shown
+// Dolo45's profile pic is the AI studio pic (AI-generated recording
+// booth, Pittsburgh skyline), shipped as a data URI in dolo45Avatar.js.
+// Wesley said 16 Nov 2026 he never sent the real photos, so the real
+// Instagram profile pic was REMOVED. Shown
 // ONLY for the exact username "Dolo45" (case-sensitive — the separate
 // banned lowercase "dolo45" account never gets it), and only when the
 // account has no saved avatar of its own. A saved avatar always wins.

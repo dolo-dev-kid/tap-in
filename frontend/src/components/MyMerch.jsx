@@ -1,4 +1,4 @@
-import { DOLO45_IG, DOLO45_BOOTH_1, DOLO45_BOOTH_2 } from "../data/dolo45Photos";
+import { DOLO45_STUDIO_AI_1, DOLO45_STUDIO_AI_2, DOLO45_STUDIO_AI_AVATAR } from "../data/dolo45Photos";
 
 // My Merch — Dolo45's merch showcase.
 // There are NO real merch products, prices or store links yet (checked
@@ -8,14 +8,15 @@ import { DOLO45_IG, DOLO45_BOOTH_1, DOLO45_BOOTH_2 } from "../data/dolo45Photos"
 // with the real shop link and product cards. Do NOT add a fake price,
 // a fake checkout, or a link to a store that does not exist.
 //
-// Photos are Wesley's own, real photos — his Instagram profile pic
-// (@nho_life_dolo45) and two photos he sent in chat of himself
-// recording in his home booth in Pittsburgh. No generated images,
-// no stock photos, no other people's photos.
+// Photos are the AI studio pics Muse created — AI-generated recording
+// booth, Pittsburgh skyline. Wesley said 16 Nov 2026 he never sent the
+// real photos, so his real Instagram profile pic and the real booth
+// photos he sent in chat were REMOVED from Tap In and replaced with
+// these AI studio pics. No real uploaded photos, no stock photos,
+// no other people's photos.
 const PHOTOS = [
-  { src: DOLO45_IG, alt: "Dolo45 — Instagram profile pic (@nho_life_dolo45)", caption: "Dolo45" },
-  { src: DOLO45_BOOTH_1, alt: "Dolo45 recording in his home booth, Pittsburgh", caption: "In the booth — home setup, Pittsburgh" },
-  { src: DOLO45_BOOTH_2, alt: "Dolo45 recording in his home booth, Pittsburgh", caption: "In the booth — home setup, Pittsburgh" }
+  { src: DOLO45_STUDIO_AI_1, alt: "Dolo45 — AI studio pic, recording booth, Pittsburgh skyline at night", caption: "AI studio — in the booth, Pittsburgh" },
+  { src: DOLO45_STUDIO_AI_2, alt: "Dolo45 — AI studio pic, recording booth, Pittsburgh skyline at dusk", caption: "AI studio — in the booth, Pittsburgh" }
 ];
 
 export default function MyMerch() {
@@ -32,8 +33,8 @@ export default function MyMerch() {
     >
       <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
         <img
-          src={DOLO45_IG}
-          alt="Dolo45 — Instagram profile pic"
+          src={DOLO45_STUDIO_AI_AVATAR}
+          alt="Dolo45 — AI studio pic"
           style={{
             width: 120,
             height: 120,
@@ -76,7 +77,7 @@ export default function MyMerch() {
 
       <div style={{ marginTop: 24 }}>
         <div style={{ fontSize: 14, fontWeight: "bold", color: "#00eaff", marginBottom: 10 }}>
-          📸 PICS OF DOLO45 — straight from the booth
+          📸 PICS OF DOLO45 — AI studio pics
         </div>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           {PHOTOS.map((p) => (
