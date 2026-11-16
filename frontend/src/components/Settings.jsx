@@ -24,11 +24,15 @@ export default function Settings() {
     localStorage.removeItem("tapin_username");
     localStorage.removeItem("tapin_user_id");
     localStorage.removeItem("tapin_role");
-    window.location.href = "#/";
+    // Reload on the login page: a hash change alone does nothing
+    // when the app is already on "#/", which left the old username
+    // and Log out button on screen after logging out.
+    window.location.href = "#/login";
+    window.location.reload();
   };
 
   return (
-    <div style={{ padding: 40, color: "white", maxWidth: 640 }}>
+    <div style={{ padding: 40, color: "white", width: "100%" }}>
       <h1>Settings</h1>
 
       <div style={{ marginTop: 20, background: "#1e1f22", padding: 20, borderRadius: 12 }}>

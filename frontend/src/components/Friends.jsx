@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import axiosInstance from "../api/axios";
 import ReferralBox from "./ReferralBox";
 import ShareTapIn from "./ShareTapIn";
 import SocialLinksRow from "./SocialLinks";
+import VerifiedBadge from "./VerifiedBadge";
+import AdminProfileView from "./AdminProfileView";
 
 // Friends are the logged-in user's real friends from the database.
 // Friend requests are real pending requests from the database too:
@@ -25,6 +27,10 @@ export default function Friends({ onNavigate }) {
   const [memberSearch, setMemberSearch] = useState("");
   const [membersLoading, setMembersLoading] = useState(false);
   const [referralCode, setReferralCode] = useState("");
+  const memberSearchRef = useRef(null);
+  const isAdmin =
+    typeof localStorage !== "undefined" && localStorage.getItem("tapin_role") === "admin";
+  const [viewingProfileId, setViewingProfileId] = useState(null);
 
   const userId =
     typeof localStorage !== "undefined"
@@ -55,6 +61,15 @@ export default function Friends({ onNavigate }) {
       .catch(() => { /* directory is a bonus if the call fails */ })
       .finally(() => setMembersLoading(false));
   };
+
+  // "Find a user" in the channel sidebar focuses the member search.
+  useEffect(() => {
+    const focusSearch = () => {
+      setTimeout(() => memberSearchRef.current?.focus(), 60);
+    };
+    window.addEventListener("tapin:focus-friend-search", focusSearch);
+    return () => window.removeEventListener("tapin:focus-friend-search", focusSearch);
+  }, []);
 
   // Search as you type (short delay so every keystroke is not a call).
   useEffect(() => {
@@ -183,6 +198,19 @@ export default function Friends({ onNavigate }) {
     <div style={{ padding: 40, color: "white" }}>
       <h1>Your Friends</h1>
 
+      {/* 🔍 Find a user — front and center, search-as-you-type,
+          online first, verified ✓ and social links on every row.
+          Members only, banned accounts never appear. */}
+      <div style={{ marginTop: 16 }}>
+        <input
+          ref={memberSearchRef}
+          value={memberSearch}
+          onChange={(e) => setMemberSearch(e.target.value)}
+          placeholder="🔍 Find a user — search members by username…"
+          style={{ width: "100%", padding: 14, borderRadius: 10, border: "1px solid #00eaff", background: "#2b2d31", color: "white", fontSize: 16 }}
+        />
+      </div>
+
       <ReferralBox compact />
       <ShareTapIn code={referralCode} />
 
@@ -293,21 +321,6 @@ export default function Friends({ onNavigate }) {
         <p style={{ color: "#aaa", margin: "8px 0 0", fontSize: 14 }}>
           Everyone on Tap In — search by username, then add them as a friend.
         </p>
-        <input
-          value={memberSearch}
-          onChange={(e) => setMemberSearch(e.target.value)}
-          placeholder="Search members by username…"
-          style={{
-            padding: 12,
-            borderRadius: 8,
-            border: "none",
-            background: "#2b2d31",
-            color: "white",
-            marginTop: 12,
-            width: 280,
-            maxWidth: "100%"
-          }}
-        />
         {membersLoading ? (
           <p style={{ color: "#aaa", marginTop: 12 }}>Finding members…</p>
         ) : members.length === 0 ? (
@@ -331,7 +344,7 @@ export default function Friends({ onNavigate }) {
             >
               <span>
                 {m.online ? "🟢 " : "⚫ "}
-                <b>{m.username}</b>
+                <b>{m.username}</b><VerifiedBadge verified={m.verified} />
                 {m.role === "admin" && (
                   <span style={{ color: "#00eaff", fontSize: 12 }}> 🛡️ Admin</span>
                 )}
@@ -378,6 +391,22 @@ export default function Friends({ onNavigate }) {
                     Add Friend
                   </button>
                 )}
+                {isAdmin && (
+                  <button
+                    onClick={() => setViewingProfileId(m.id)}
+                    title="Admin only: view this member's whole profile"
+                    style={{
+                      padding: "8px 16px",
+                      borderRadius: 6,
+                      background: "#2b2d31",
+                      border: "1px solid #00eaff",
+                      cursor: "pointer",
+                      color: "#00eaff"
+                    }}
+                  >
+                    👤 View profile
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     localStorage.setItem("tapin_dm_username", m.username);
@@ -422,7 +451,7 @@ export default function Friends({ onNavigate }) {
           >
             <span>
               {presence[friend]?.online ? "🟢 " : "⚫ "}
-              {friend}
+              {friend}<VerifiedBadge verified={presence[friend]?.verified} />
               {presence[friend] && !presence[friend].online && presence[friend].lastSeenAt && (
                 <span style={{ color: "#777", fontSize: 12 }}>
                   {" "}· last seen {new Date(presence[friend].lastSeenAt).toLocaleDateString()}
@@ -506,6 +535,9 @@ export default function Friends({ onNavigate }) {
           <p style={{ marginTop: 12, color: "#ffce54" }}>{message}</p>
         )}
       </div>
+      {viewingProfileId && (
+        <AdminProfileView userId={viewingProfileId} onClose={() => setViewingProfileId(null)} />
+      )}
     </div>
   );
 }

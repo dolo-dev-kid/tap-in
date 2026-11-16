@@ -7,6 +7,7 @@ export default function Register() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [referralCode, setReferralCode] = useState("");
+  const [email, setEmail] = useState("");
   const [invitedBy, setInvitedBy] = useState("");
   const [referralWarning, setReferralWarning] = useState("");
   const [error, setError] = useState("");
@@ -54,7 +55,8 @@ export default function Register() {
       const response = await axiosInstance.post("/auth/register", {
         username,
         password,
-        ...(referralCode.trim() ? { referralCode: referralCode.trim().toUpperCase() } : {})
+        ...(referralCode.trim() ? { referralCode: referralCode.trim().toUpperCase() } : {}),
+        ...(email.trim() ? { email: email.trim() } : {})
       });
 
       if (response.data.success) {
@@ -160,6 +162,22 @@ export default function Register() {
           />
 
           {error && <p style={{ color: "#ff6b6b", marginBottom: 15 }}>{error}</p>}
+
+          <input
+            type="email"
+            placeholder="Email (optional — for the verified checkmark, admin 2FA, and password reset)"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            style={{
+              width: "100%",
+              padding: 12,
+              marginBottom: 15,
+              borderRadius: 8,
+              border: "none",
+              background: "#2b2d31",
+              color: "white"
+            }}
+          />
 
           <input
             type="text"

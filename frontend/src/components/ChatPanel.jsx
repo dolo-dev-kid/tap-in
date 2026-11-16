@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import io from "socket.io-client";
 import axiosInstance from "../api/axios";
+import VerifiedBadge from "./VerifiedBadge";
 
 // Live group chat over the backend's Socket.IO "chat-message" events
 // (room "global"). Before this fix chat was local-only: a message only
@@ -53,7 +54,18 @@ export default function ChatPanel() {
   const [addUsername, setAddUsername] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
-  const [presence, setPresence] = useState({}); // userId -> { online, lastSeenAt, username }
+  // Chat search — find a private chat or group by username or by a
+  // message in it. Searches ONLY my own chats (GET /chat/search),
+  // never anyone else's. Banned users never appear in results.
+  const [chatSearch, setChatSearch] = useState("");
+  const [chatSearchResults, setChatSearchResults] = useState([]);
+  const [chatSearching, setChatSearching] = useState(false);
+  const chatSearchRef = useRef(null);
+  const [presence, setPresence] = useState({}); // userId -> { online, lastSeenAt, username, verified }
+  // Presence is keyed by userId; messages only carry the sender's
+  // username, so look the sender up by name for their ✓ badge.
+  const presenceByUsername = (name) =>
+    Object.values(presence).find((p) => p.username === name) || null;
   const privBoxRef = useRef(null);
   const privSocketRef = useRef(null);
   const activeRoomRef = useRef(null);
@@ -99,6 +111,32 @@ export default function ChatPanel() {
       setPrivError(err.response?.data?.error || "Could not open that chat.");
     }
   };
+
+  // Search-as-you-type for chats (short delay, 2+ characters).
+  useEffect(() => {
+    const q = chatSearch.trim();
+    if (q.length < 2) { setChatSearchResults([]); return undefined; }
+    setChatSearching(true);
+    const timer = setTimeout(() => {
+      axiosInstance
+        .get(`/chat/search?q=${encodeURIComponent(q)}`, { headers: authHeaders() })
+        .then((res) => setChatSearchResults(res.data?.rooms || []))
+        .catch(() => setChatSearchResults([]))
+        .finally(() => setChatSearching(false));
+    }, 300);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatSearch]);
+
+  // "Find a chat" in the channel sidebar focuses this search bar.
+  useEffect(() => {
+    const focusSearch = () => {
+      setTab("private");
+      setTimeout(() => chatSearchRef.current?.focus(), 60);
+    };
+    window.addEventListener("tapin:focus-chat-search", focusSearch);
+    return () => window.removeEventListener("tapin:focus-chat-search", focusSearch);
+  }, []);
 
   // Global room listeners (unchanged).
   useEffect(() => {
@@ -307,7 +345,7 @@ export default function ChatPanel() {
   const groups = rooms.filter((r) => r.type === "group");
 
   return (
-    <div style={{ padding: 30, color: "white", maxWidth: 900 }}>
+    <div style={{ padding: 30, color: "white", width: "100%" }}>
       <h2>Messages</h2>
 
       <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
@@ -340,6 +378,10 @@ export default function ChatPanel() {
             {live
               ? "● Live — messages go to everyone in the global room"
               : "● Not connected to live chat — check the backend, messages stay on this screen"}
+          </p>
+          <p style={{ marginTop: 6, color: "#aaa", fontSize: 13 }}>
+            Global chat is never auto-deleted, auto-blocked, or auto-banned — if something malicious
+            shows up, only Dolo45 gets an alert to review it.
           </p>
 
           <div
@@ -399,9 +441,11 @@ export default function ChatPanel() {
             {tab === "private"
               ? "Private 1-to-1 chats — only you and the other person can see these messages."
               : "Private group chats — only members can see these messages. Talk to your people without everybody being in your business."}
-            {" "}The owner (Dolo45) can review chats for safety, to keep kids
-            and everybody safe. Nothing is auto-banned — anything flagged
-            goes to the owner to look at first.
+            {" "}Private means private — only the people in the chat can
+            see it. The safety monitor only alerts Dolo45 if it sees
+            something malicious, for his review only. Nothing is blocked,
+            deleted, or auto-banned, and no other admin can read your
+            private chats.
           </p>
 
           {!loggedIn && (
@@ -415,6 +459,40 @@ export default function ChatPanel() {
               {privError}
             </p>
           )}
+
+          {/* 🔍 Search chats — front and center. People or messages, my chats only. */}
+          <div style={{ marginTop: 16 }}>
+            <input
+              ref={chatSearchRef}
+              value={chatSearch}
+              onChange={(e) => setChatSearch(e.target.value)}
+              placeholder="🔍 Search chats — a person's name, or words from a message…"
+              style={{ width: "100%", padding: 14, borderRadius: 10, border: "1px solid #00eaff", background: "#2b2d31", color: "white", fontSize: 16 }}
+            />
+            {chatSearching && <p style={{ color: "#aaa", marginTop: 8 }}>Searching your chats…</p>}
+            {!chatSearching && chatSearch.trim().length >= 2 && chatSearchResults.length === 0 && (
+              <p style={{ color: "#aaa", marginTop: 8 }}>No chats match "{chatSearch.trim()}".</p>
+            )}
+            {chatSearchResults.map((room) => (
+              <button
+                key={room.id}
+                onClick={() => openRoom(room)}
+                style={{ display: "block", width: "100%", textAlign: "left", padding: 12, borderRadius: 10, border: "none", cursor: "pointer", marginTop: 8, background: "#1e1f22", color: "white" }}
+              >
+                <span style={{ fontWeight: "bold" }}>
+                  {room.type === "group" ? "👥 " : "🔒 "}{dmTitle(room, username)}
+                </span>
+                {room.matchedBy === "username" && (
+                  <span style={{ color: "#00eaff", fontSize: 13 }}> · matched name</span>
+                )}
+                {room.snippet && (
+                  <span style={{ color: "#aaa", fontSize: 13, display: "block", marginTop: 4 }}>
+                    {room.snippet.senderUsername}: {room.snippet.text}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
 
           {tab === "private" && (
             <div style={{ marginTop: 16 }}>
@@ -443,7 +521,7 @@ export default function ChatPanel() {
                 <button onClick={searchUsers} style={btnSecondary}>Find</button>
                 {searchResults.map((u) => (
                   <div key={u.id} style={{ marginTop: 8, display: "flex", gap: 10, alignItems: "center" }}>
-                    <span>{presence[String(u.id)]?.online ? "🟢" : "⚫"} {u.username}</span>
+                    <span>{presence[String(u.id)]?.online ? "🟢" : "⚫"} {u.username}<VerifiedBadge verified={u.verified} /></span>
                     <button
                       onClick={() => createDm(u.username)}
                       style={btnSecondary}
@@ -476,7 +554,8 @@ export default function ChatPanel() {
           )}
 
           <h3 style={{ marginTop: 24, marginBottom: 8 }}>
-            {tab === "private" ? "My private chats" : "My groups"}
+            {tab === "private" ? "🕐 Recent chats" : "🕐 Recent groups"}
+            <span style={{ fontWeight: "normal", fontSize: 13, color: "#aaa" }}> — newest first</span>
           </h3>
           {(tab === "private" ? dms : groups).length === 0 ? (
             <p style={{ color: "#aaa" }}>
@@ -540,7 +619,7 @@ export default function ChatPanel() {
                   privMessages.map((m) => (
                     <div key={m.id} style={{ marginBottom: 10 }}>
                       <strong style={{ color: String(m.senderId) === String(myId) ? "#00eaff" : "#fff" }}>
-                        {m.senderUsername}
+                        {m.senderUsername}<VerifiedBadge verified={presenceByUsername(m.senderUsername)?.verified} />
                       </strong>
                       <span style={{ color: "#777", fontSize: 12 }}>
                         {" "}{m.createdAt ? new Date(m.createdAt).toLocaleString() : ""}

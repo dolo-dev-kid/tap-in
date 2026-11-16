@@ -5,6 +5,8 @@ import MyMerch from "./MyMerch";
 import ReferralBox from "./ReferralBox";
 import ShareTapIn from "./ShareTapIn";
 import SocialLinksRow, { SOCIAL_PLATFORMS } from "./SocialLinks";
+import VerifiedBadge from "./VerifiedBadge";
+import EmailVerification from "./EmailVerification";
 import { DOLO45_IG } from "../data/dolo45Photos";
 
 // Dolo45's profile pic is his real Instagram profile pic
@@ -146,6 +148,7 @@ export default function Profile() {
   const [socialLinks, setSocialLinks] = useState(emptyLinks());
   const [socialInput, setSocialInput] = useState(emptyLinks());
   const [referralCode, setReferralCode] = useState("");
+  const [verified, setVerified] = useState(false);
 
   // Load the real profile from the server when logged in.
   useEffect(() => {
@@ -158,6 +161,7 @@ export default function Profile() {
           setDisplayName(res.data.username);
           localStorage.setItem("tapin_username", res.data.username);
         }
+        setVerified(Boolean(res.data?.verified));
         setBio(res.data?.bio || "");
         setAvatar(res.data?.avatar || "");
         setBioInput(res.data?.bio || "");
@@ -296,8 +300,7 @@ export default function Profile() {
           background: "#1e1f22",
           padding: 20,
           borderRadius: 12,
-          width: 400,
-          maxWidth: "100%"
+          width: "100%"
         }}
       >
         <img
@@ -312,7 +315,7 @@ export default function Profile() {
           }}
         />
 
-        <h2>{displayName}</h2>
+        <h2>{displayName}<VerifiedBadge verified={verified} size={18} /></h2>
         {loading ? (
           <p style={{ marginTop: 10, color: "#aaa" }}>Loading your profile…</p>
         ) : bio ? (
@@ -432,6 +435,8 @@ export default function Profile() {
           </button>
         )}
       </div>
+
+      {userId && <EmailVerification />}
 
       {userId && <ReferralBox />}
 

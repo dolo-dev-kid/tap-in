@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import io from "socket.io-client";
 import axiosInstance from "../api/axios";
+import VerifiedBadge from "./VerifiedBadge";
+import AdminProfileView from "./AdminProfileView";
 
 // Member / activity panel — Discord-style right rail, real data only.
 // LIVE NOW comes from GET /live (username, room, since — the backend
@@ -17,6 +19,9 @@ export default function MemberPanel({ onNavigate }) {
   const [presence, setPresence] = useState([]);
   const [members, setMembers] = useState([]);
   const [error, setError] = useState("");
+  const isAdmin =
+    typeof localStorage !== "undefined" && localStorage.getItem("tapin_role") === "admin";
+  const [viewingProfileId, setViewingProfileId] = useState(null);
 
   const load = async () => {
     const token = localStorage.getItem("token");
@@ -64,14 +69,14 @@ export default function MemberPanel({ onNavigate }) {
   };
 
   return (
-    <div style={{ width: 240, flexShrink: 0, background: "#2b2d31", padding: 16, overflowY: "auto", color: "white" }}>
+    <div style={{ width: 260, height: "100%", flexShrink: 0, background: "#2b2d31", padding: 16, paddingTop: 56, overflowY: "auto", color: "white" }}>
       <h3 style={{ fontSize: 13, color: "#00eaff", letterSpacing: 1 }}>🔴 LIVE NOW</h3>
       {live.length === 0 ? (
         <p style={{ marginTop: 8, color: "#aaa", fontSize: 13 }}>Nobody is live right now.</p>
       ) : (
         live.map((b, i) => (
           <div key={`${b.username}-${b.room}-${i}`} style={{ marginTop: 10, background: "#1e1f22", padding: 10, borderRadius: 8 }}>
-            <div style={{ fontWeight: "bold" }}>🔴 {b.username}</div>
+            <div style={{ fontWeight: "bold" }}>🔴 {b.username}<VerifiedBadge verified={members.find((m) => m.username === b.username)?.verified} /></div>
             <div style={{ color: "#aaa", fontSize: 12, marginTop: 4 }}>
               Room “{b.room}” · live {since(b.startedAt)}
             </div>
@@ -91,14 +96,20 @@ export default function MemberPanel({ onNavigate }) {
       ) : (
         <>
           {online.map((m) => (
-            <div key={m.id} style={{ marginTop: 8, fontSize: 14 }}>
-              🟢 {m.username}{m.role === "admin" ? " 🛡️" : ""}
+            <div key={m.id} style={{ marginTop: 8, fontSize: 14, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
+              <span>🟢 {m.username}<VerifiedBadge verified={m.verified} />{m.role === "admin" ? " 🛡️" : ""}</span>
+              {isAdmin && (
+                <button onClick={() => setViewingProfileId(m.id)} title="Admin only: view full profile" style={{ padding: "3px 8px", borderRadius: 6, background: "transparent", color: "#00eaff", border: "1px solid #00eaff", cursor: "pointer", fontSize: 11 }}>👤 View</button>
+              )}
             </div>
           ))}
           {presenceOnline.map((p) => (
-            <div key={p.userId} style={{ marginTop: 8, fontSize: 14 }}>🟢 {p.username}</div>
+            <div key={p.userId} style={{ marginTop: 8, fontSize: 14 }}>🟢 {p.username}<VerifiedBadge verified={p.verified} /></div>
           ))}
         </>
+      )}
+      {viewingProfileId && (
+        <AdminProfileView userId={viewingProfileId} onClose={() => setViewingProfileId(null)} />
       )}
       {error && <p style={{ marginTop: 16, color: "#ffce54", fontSize: 12 }}>{error}</p>}
     </div>

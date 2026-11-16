@@ -3,14 +3,17 @@ import axiosInstance from "../api/axios";
 import MyMerch from "./MyMerch";
 import { readRefFromUrl } from "./ReferralBox";
 
-export default function Landing() {
+export default function Landing({ authUser = null }) {
   const [health, setHealth] = useState(null);
   const [invitedBy, setInvitedBy] = useState("");
   const [inviteCode, setInviteCode] = useState("");
+  // Auth comes from App (authUser prop). When logged in, show ONLY
+  // "Welcome back, <username>" — Log in / Sign up never appear.
   const loggedInUsername =
-    typeof localStorage !== "undefined"
+    authUser?.username ||
+    (typeof localStorage !== "undefined"
       ? localStorage.getItem("tapin_username")
-      : null;
+      : null);
   const isLoggedIn =
     typeof localStorage !== "undefined" &&
     !!localStorage.getItem("token") &&

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import axiosInstance from "../api/axios";
 import { uploadFile } from "../api/upload";
 import MediaView from "./MediaView";
+import VerifiedBadge from "./VerifiedBadge";
 import { getFeaturedTrack, ROTATION_DAYS } from "../data/featuredTracks";
 
 // Featured Dolo45 track — a feed FEATURE, not a member post. One track,
@@ -159,7 +160,7 @@ export default function Feed() {
           placeholder={loggedIn ? "What's happening?" : "Log in to post"}
           disabled={!loggedIn}
           style={{
-            width: "70%",
+            width: "100%",
             padding: 12,
             borderRadius: 8,
             border: "none",
@@ -206,7 +207,7 @@ export default function Feed() {
               border: "none",
               background: "#2b2d31",
               color: "white",
-              width: "70%"
+              width: "100%"
             }}
           />
           {attachFile && (
@@ -251,7 +252,7 @@ export default function Feed() {
               marginBottom: 20
             }}
           >
-            <strong>{p.username}</strong>
+            <strong>{p.username}<VerifiedBadge verified={p.verified} /></strong>
             {p.createdAt && (
               <span style={{ color: "#aaa", fontSize: 12, marginLeft: 10 }}>
                 {new Date(p.createdAt).toLocaleString()}

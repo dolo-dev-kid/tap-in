@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import io from "socket.io-client";
 import axiosInstance from "../api/axios";
+import VerifiedBadge from "./VerifiedBadge";
+import StreamDestinations from "./StreamDestinations";
 
 // Stream Dashboard — Streamlabs feel, real data only.
 // WHO IS LIVE comes from GET /live (username, room, since). The
@@ -85,13 +87,26 @@ export default function StreamDashboard({ onNavigate }) {
     setTimeout(() => { socket.disconnect(); setStopping(false); }, 3000);
   };
 
+  // Twitch-style: the live stream is front and center — the first
+  // live broadcast gets a big featured card, the rest are cards
+  // below it, alerts feed underneath. Full page, no narrow column.
+  const featured = live[0];
   return (
-    <div style={{ padding: 40, color: "white" }}>
+    <div style={{ padding: 24, color: "white", width: "100%", minHeight: "100%" }}>
       <h1>Stream Dashboard</h1>
       <p style={{ marginTop: 8, color: "#aaa", fontSize: 14 }}>
         Live stats from Tap In — real broadcasts only. Viewer count and
         bitrate aren't tracked by Tap In yet, so they're not shown here.
       </p>
+
+      {featured && (
+        <div style={{ marginTop: 20, background: "#1e1f22", border: "2px solid #ff4444", padding: 24, borderRadius: 12 }}>
+          <div style={{ color: "#ff4444", fontWeight: "bold", fontSize: 13 }}>🔴 LIVE NOW — FEATURED</div>
+          <h2 style={{ marginTop: 8, fontSize: 28 }}>{featured.username}<VerifiedBadge verified={true} size={18} /></h2>
+          <p style={{ marginTop: 6, color: "#aaa" }}>Room “{featured.room}” · live {durationSince(featured.startedAt)}</p>
+          <button onClick={() => onNavigate && onNavigate("video", featured.room)} style={{ marginTop: 14, padding: "12px 24px", borderRadius: 8, background: "#00eaff", border: "none", cursor: "pointer", fontWeight: "bold", fontSize: 15 }}>▶ Watch live</button>
+        </div>
+      )}
 
       <div style={{ marginTop: 20, background: "#1e1f22", padding: 20, borderRadius: 12 }}>
         <h2>Live Now</h2>
@@ -143,6 +158,8 @@ export default function StreamDashboard({ onNavigate }) {
           live to everyone in that room, and they get a “just went live” alert.
         </p>
       </div>
+
+      <StreamDestinations />
 
       <div style={{ marginTop: 20, background: "#1e1f22", padding: 20, borderRadius: 12 }}>
         <h2>🔔 Live Alerts</h2>

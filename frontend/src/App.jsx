@@ -17,13 +17,15 @@ import Overlay from "./components/Overlay";
 import Settings from "./components/Settings";
 import AdminPanel from "./components/AdminPanel";
 
-// Discord-style shell: server rail (round icons) | channel sidebar
-// (text / voice channels + real servers) | main content | member /
-// activity panel (only on chat, video, servers and stream pages).
-// Every old page is still reachable — same page ids, same navigate().
-// Dark Discord palette (#1e1f22 / #2b2d31 / #313338) with the existing
-// cyan (#00eaff) accent. Auth, admin (exact Dolo45 only) and the
-// banned lowercase dolo45 account are untouched.
+// Twitch + Discord layout, Streamlabs feel: Discord server rail +
+// channels on the left, a Twitch-style main area that takes the
+// WHOLE page (full width, full height — no narrow centered column),
+// and the live/chat panel on the right as a collapsible OVERLAY, so
+// it never squeezes the main content. Every old page is still
+// reachable — same page ids, same navigate(). Dark Discord palette
+// (#1e1f22 / #2b2d31 / #313338) with the existing cyan (#00eaff)
+// accent. Auth, admin (exact Dolo45 only) and the banned lowercase
+// dolo45 account are untouched.
 const MEMBER_PANEL_PAGES = ["chat", "video", "servers", "dashboard"];
 
 export default function App() {
@@ -34,6 +36,66 @@ export default function App() {
   const [liveRoom, setLiveRoom] = useState("");
   const [servers, setServers] = useState([]);
   const [selectedServer, setSelectedServer] = useState("");
+  // Auth state lives HERE, not scattered as localStorage reads in
+  // every component. That was the Log in / Sign up bug (Nov 16):
+  // the shell read tapin_username once at mount, so after a login
+  // (or an older session that stored a token but no username) the
+  // sidebar and Landing kept showing Log in / Sign up while logged
+  // in. syncAuth re-reads storage on mount, on storage/hash changes
+  // and on focus, and recovers the username from the token alone
+  // via GET /auth/me when localStorage has no username saved.
+  const [authUser, setAuthUser] = useState(null);
+  const syncAuth = async () => {
+    if (typeof localStorage === "undefined") return;
+    const token = localStorage.getItem("token");
+    if (!token) { setAuthUser(null); return; }
+    let username = localStorage.getItem("tapin_username");
+    let userId = localStorage.getItem("tapin_user_id");
+    let role = localStorage.getItem("tapin_role");
+    if (!username) {
+      try {
+        const res = await axiosInstance.get("/auth/me", { headers: { Authorization: `Bearer ${token}` } });
+        if (res.data?.user?.username) {
+          username = res.data.user.username;
+          userId = String(res.data.user.id);
+          role = res.data.user.role || role;
+          localStorage.setItem("tapin_username", username);
+          localStorage.setItem("tapin_user_id", userId);
+          if (role) localStorage.setItem("tapin_role", role);
+        }
+      } catch (err) { /* token may be stale — shell stays logged out */ }
+    }
+    setAuthUser(username ? { username, id: userId, role } : null);
+  };
+  // Log out: clear everything, then force a fresh load on the login
+  // page. A plain hash change to "#/" does nothing when the app is
+  // already on "#/", which left the old username on screen.
+  const handleLogout = () => {
+    if (typeof localStorage !== "undefined") {
+      localStorage.removeItem("token");
+      localStorage.removeItem("tapin_username");
+      localStorage.removeItem("tapin_user_id");
+      localStorage.removeItem("tapin_role");
+    }
+    setAuthUser(null);
+    window.location.href = "#/login";
+    window.location.reload();
+  };
+  useEffect(() => {
+    syncAuth();
+    const onAuthChange = () => syncAuth();
+    window.addEventListener("storage", onAuthChange);
+    window.addEventListener("hashchange", onAuthChange);
+    window.addEventListener("focus", onAuthChange);
+    window.addEventListener("tapin:auth-changed", onAuthChange);
+    return () => {
+      window.removeEventListener("storage", onAuthChange);
+      window.removeEventListener("hashchange", onAuthChange);
+      window.removeEventListener("focus", onAuthChange);
+      window.removeEventListener("tapin:auth-changed", onAuthChange);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // navigate(page, room?) — a live notification passes the room name
   // so Video Chat opens on that person's live room.
@@ -109,9 +171,13 @@ export default function App() {
   }, []);
 
   const showMemberPanel = MEMBER_PANEL_PAGES.includes(page);
+  // Right panel is an overlay, not a column — open by default on
+  // live/chat pages, closable with the 👥 button so the tab takes
+  // the full page when you want it to.
+  const [memberPanelOpen, setMemberPanelOpen] = useState(true);
 
   return (
-    <div style={{ display: "flex", height: "100vh", background: "#313338", color: "#fff" }}>
+    <div style={{ display: "flex", height: "100vh", width: "100vw", background: "#313338", color: "#fff", overflow: "hidden" }}>
       <Sidebar
         onNavigate={navigate}
         page={page}
@@ -122,6 +188,8 @@ export default function App() {
       <ChannelSidebar
         page={page}
         onNavigate={navigate}
+        authUser={authUser}
+        onLogout={handleLogout}
         servers={servers}
         selectedServer={selectedServer}
         onSelectServer={setSelectedServer}
@@ -129,8 +197,17 @@ export default function App() {
         notificationCount={notificationCount}
       />
 
-      <div style={{ flex: 1, overflowY: "auto", background: "#313338", minWidth: 0 }}>
-        {page === "landing" && <Landing />}
+      <div style={{ flex: 1, minWidth: 0, height: "100vh", overflowY: "auto", overflowX: "hidden", background: "#313338", position: "relative" }}>
+        {showMemberPanel && (
+          <button
+            onClick={() => setMemberPanelOpen((v) => !v)}
+            title={memberPanelOpen ? "Hide live & online panel" : "Show live & online panel"}
+            style={{ position: "absolute", top: 12, right: 12, zIndex: 30, padding: "8px 12px", borderRadius: 8, background: "#2b2d31", color: "#00eaff", border: "1px solid #00eaff", cursor: "pointer", fontWeight: "bold", fontSize: 13 }}
+          >
+            {memberPanelOpen ? "👥 Hide panel" : "👥 Live & online"}
+          </button>
+        )}
+        {page === "landing" && <Landing authUser={authUser} />}
         {page === "feed" && <Feed />}
         {page === "video" && <VideoChat initialRoom={liveRoom} />}
         {page === "chat" && <ChatPanel />}
@@ -146,7 +223,11 @@ export default function App() {
         {page === "admin" && <AdminPanel />}
       </div>
 
-      {showMemberPanel && <MemberPanel onNavigate={navigate} />}
+      {showMemberPanel && memberPanelOpen && (
+        <div style={{ position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 25, boxShadow: "-8px 0 24px rgba(0,0,0,0.5)", borderLeft: "1px solid #1e1f22" }}>
+          <MemberPanel onNavigate={navigate} />
+        </div>
+      )}
     </div>
   );
 }

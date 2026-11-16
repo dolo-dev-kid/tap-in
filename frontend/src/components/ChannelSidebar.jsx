@@ -21,15 +21,33 @@ const MORE = [
   { id: "settings", icon: "⚙️", label: "Settings" }
 ];
 
-export default function ChannelSidebar({ page, onNavigate, servers = [], selectedServer, onSelectServer, friendRequestCount = 0, notificationCount = 0 }) {
-  const username = typeof localStorage !== "undefined" ? localStorage.getItem("tapin_username") : null;
-  const isAdmin = typeof localStorage !== "undefined" && localStorage.getItem("tapin_role") === "admin";
+export default function ChannelSidebar({ page, onNavigate, servers = [], selectedServer, onSelectServer, friendRequestCount = 0, notificationCount = 0, authUser = null, onLogout = null }) {
+  // Auth comes from App (authUser prop) — the sidebar never trusts a
+  // stale localStorage read on its own. When logged in it shows ONLY
+  // the username + Log out; Log in / Sign up appear ONLY logged out.
+  const username = authUser?.username
+    || (typeof localStorage !== "undefined" ? localStorage.getItem("tapin_username") : null);
+  const isAdmin = authUser?.role === "admin"
+    || (typeof localStorage !== "undefined" && localStorage.getItem("tapin_role") === "admin");
   const logOut = () => {
+    if (onLogout) { onLogout(); return; }
     localStorage.removeItem("token");
     localStorage.removeItem("tapin_username");
     localStorage.removeItem("tapin_user_id");
     localStorage.removeItem("tapin_role");
-    window.location.href = "#/";
+    window.location.href = "#/login";
+    window.location.reload();
+  };
+  // Find a chat / Find a user — entry points from the sidebar. They
+  // open the right tab and focus its search bar (ChatPanel / Friends
+  // listen for these events).
+  const findChat = () => {
+    onNavigate("chat");
+    setTimeout(() => window.dispatchEvent(new Event("tapin:focus-chat-search")), 50);
+  };
+  const findUser = () => {
+    onNavigate("friends");
+    setTimeout(() => window.dispatchEvent(new Event("tapin:focus-friend-search")), 50);
   };
   const badgeFor = (id) => (id === "friends" ? friendRequestCount : id === "notifications" ? notificationCount : 0);
   const channelBtn = (c) => {
@@ -63,6 +81,17 @@ export default function ChannelSidebar({ page, onNavigate, servers = [], selecte
         <div style={{ fontSize: 11, color: "#80848e", fontWeight: "normal", marginTop: 2 }}>Dolo45's community</div>
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: 10 }}>
+        {username && (
+          <>
+            <div style={{ fontSize: 11, color: "#80848e", letterSpacing: 1, padding: "6px 8px" }}>FIND</div>
+            <button onClick={findChat} style={{ display: "flex", width: "100%", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 6, border: "none", cursor: "pointer", background: "transparent", color: "#b5bac1", fontSize: 14, textAlign: "left" }}>
+              <span>🔍</span>Find a chat
+            </button>
+            <button onClick={findUser} style={{ display: "flex", width: "100%", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 6, border: "none", cursor: "pointer", background: "transparent", color: "#b5bac1", fontSize: 14, textAlign: "left" }}>
+              <span>🔍</span>Find a user
+            </button>
+          </>
+        )}
         <div style={{ fontSize: 11, color: "#80848e", letterSpacing: 1, padding: "6px 8px" }}>TEXT CHANNELS</div>
         {TEXT_CHANNELS.map(channelBtn)}
         <div style={{ fontSize: 11, color: "#80848e", letterSpacing: 1, padding: "14px 8px 6px" }}>VOICE CHANNELS</div>
