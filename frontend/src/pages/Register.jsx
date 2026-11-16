@@ -1,13 +1,34 @@
 import { useEffect, useState } from "react";
 import axiosInstance from "../api/axios";
+import { readRefFromUrl } from "../components/ReferralBox";
 
 export default function Register() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [referralCode, setReferralCode] = useState("");
+  const [invitedBy, setInvitedBy] = useState("");
+  const [referralWarning, setReferralWarning] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [dbDown, setDbDown] = useState(false);
+
+  // Referral link (?ref=DOLO45-K7Q2): pre-fill the code from the
+  // link, and show who invited you — signing up from a friend's
+  // link makes you friends automatically. The code is optional:
+  // an invalid one can be cleared and signup still works.
+  useEffect(() => {
+    const ref = readRefFromUrl();
+    if (!ref) return;
+    setReferralCode(ref.toUpperCase());
+    axiosInstance
+      .get(`/referral/${encodeURIComponent(ref)}`)
+      .then((res) => {
+        if (res.data?.valid) setInvitedBy(res.data.username);
+        else setReferralWarning("That referral code doesn't belong to anyone — you can clear it and sign up anyway.");
+      })
+      .catch(() => { /* lookup is a bonus; signup still validates */ });
+  }, []);
 
   // If the database is not connected yet, say so up front instead of
   // letting the user fill in a form that cannot work.
@@ -32,7 +53,8 @@ export default function Register() {
     try {
       const response = await axiosInstance.post("/auth/register", {
         username,
-        password
+        password,
+        ...(referralCode.trim() ? { referralCode: referralCode.trim().toUpperCase() } : {})
       });
 
       if (response.data.success) {
@@ -138,6 +160,46 @@ export default function Register() {
           />
 
           {error && <p style={{ color: "#ff6b6b", marginBottom: 15 }}>{error}</p>}
+
+          <input
+            type="text"
+            placeholder="Referral code (optional — from a friend's invite link)"
+            value={referralCode}
+            onChange={(e) => {
+              setReferralCode(e.target.value.toUpperCase());
+              setInvitedBy("");
+              setReferralWarning("");
+            }}
+            style={{
+              width: "100%",
+              padding: 12,
+              marginBottom: 15,
+              borderRadius: 8,
+              border: "none",
+              background: "#2b2d31",
+              color: "white"
+            }}
+          />
+          {invitedBy && (
+            <p style={{ color: "#00eaff", marginBottom: 15, fontSize: 14 }}>
+              👋 You were invited by <b>{invitedBy}</b> — you'll be friends automatically when you sign up.
+            </p>
+          )}
+          {referralWarning && (
+            <p style={{ color: "#ffce54", marginBottom: 15, fontSize: 14 }}>
+              {referralWarning}{" "}
+              <button
+                type="button"
+                onClick={() => {
+                  setReferralCode("");
+                  setReferralWarning("");
+                }}
+                style={{ background: "none", border: "none", color: "#00eaff", cursor: "pointer", textDecoration: "underline", padding: 0, fontSize: 14 }}
+              >
+                Clear the code
+              </button>
+            </p>
+          )}
 
           <button
             type="submit"

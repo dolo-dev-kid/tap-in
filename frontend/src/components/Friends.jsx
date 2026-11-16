@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import axiosInstance from "../api/axios";
+import ReferralBox from "./ReferralBox";
 
 // Friends are the logged-in user's real friends from the database.
 // Friend requests are real pending requests from the database too:
@@ -15,6 +16,12 @@ export default function Friends({ onNavigate }) {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
+  // Find Members — the directory that fixes "you have to already
+  // know who is on here": every member, searchable, with an online
+  // dot and an Add Friend button. Members-only, no banned accounts.
+  const [members, setMembers] = useState([]);
+  const [memberSearch, setMemberSearch] = useState("");
+  const [membersLoading, setMembersLoading] = useState(false);
 
   const userId =
     typeof localStorage !== "undefined"
@@ -32,6 +39,27 @@ export default function Friends({ onNavigate }) {
       .then((res) => setRequests(res.data?.requests || []))
       .catch(() => { /* requests are a bonus if the call fails */ });
   };
+
+  const loadMembers = (search) => {
+    if (!localStorage.getItem("token")) return;
+    setMembersLoading(true);
+    axiosInstance
+      .get("/members", {
+        headers: authHeaders(),
+        params: search ? { search } : {}
+      })
+      .then((res) => setMembers(res.data?.members || []))
+      .catch(() => { /* directory is a bonus if the call fails */ })
+      .finally(() => setMembersLoading(false));
+  };
+
+  // Search as you type (short delay so every keystroke is not a call).
+  useEffect(() => {
+    if (!localStorage.getItem("token")) return undefined;
+    const timer = setTimeout(() => loadMembers(memberSearch.trim()), 300);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [memberSearch]);
 
   useEffect(() => {
     if (!userId) return;
@@ -63,8 +91,8 @@ export default function Friends({ onNavigate }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
-  const addFriend = async () => {
-    const friendName = name.trim();
+  const addFriend = async (friendNameArg) => {
+    const friendName = (friendNameArg || name).trim();
     if (!friendName) return;
     const userId = localStorage.getItem("tapin_user_id");
     if (!userId) {
@@ -80,7 +108,7 @@ export default function Friends({ onNavigate }) {
         { headers: authHeaders() }
       );
       if (res.data.success) {
-        setName("");
+        if (!friendNameArg) setName("");
         setMessage(
           res.data.accepted
             ? `${friendName} had already sent you a request — you're friends now.`
@@ -89,6 +117,7 @@ export default function Friends({ onNavigate }) {
               : `Friend request sent to ${friendName} — they'll see it in their Friend Requests.`
         );
         if (res.data.accepted && res.data.friends) setFriends(res.data.friends);
+        loadMembers(memberSearch.trim());
       }
     } catch (err) {
       setMessage(
@@ -146,6 +175,8 @@ export default function Friends({ onNavigate }) {
   return (
     <div style={{ padding: 40, color: "white" }}>
       <h1>Your Friends</h1>
+
+      <ReferralBox compact />
 
       {/* Friend Requests — always visible at the top, with a count,
           so a request can never sit hidden the way it used to. */}
@@ -242,6 +273,122 @@ export default function Friends({ onNavigate }) {
               </div>
             );
           })
+        )}
+      </div>
+
+      {/* Find Members — the directory. Before this, a member could
+          only find someone if they already knew the exact username;
+          now every member is listed here, searchable, with an online
+          dot and an Add Friend button. Banned accounts never appear. */}
+      <div style={{ marginTop: 30 }}>
+        <h2 style={{ margin: 0, fontSize: 18 }}>🔍 Find Members</h2>
+        <p style={{ color: "#aaa", margin: "8px 0 0", fontSize: 14 }}>
+          Everyone on Tap In — search by username, then add them as a friend.
+        </p>
+        <input
+          value={memberSearch}
+          onChange={(e) => setMemberSearch(e.target.value)}
+          placeholder="Search members by username…"
+          style={{
+            padding: 12,
+            borderRadius: 8,
+            border: "none",
+            background: "#2b2d31",
+            color: "white",
+            marginTop: 12,
+            width: 280,
+            maxWidth: "100%"
+          }}
+        />
+        {membersLoading ? (
+          <p style={{ color: "#aaa", marginTop: 12 }}>Finding members…</p>
+        ) : members.length === 0 ? (
+          <p style={{ color: "#aaa", marginTop: 12 }}>
+            {memberSearch ? `No members match "${memberSearch}".` : "No other members yet — invite someone with your referral code above."}
+          </p>
+        ) : (
+          members.map((m) => (
+            <div
+              key={m.id}
+              style={{
+                background: "#1e1f22",
+                padding: 15,
+                borderRadius: 8,
+                marginTop: 10,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 10
+              }}
+            >
+              <span>
+                {m.online ? "🟢 " : "⚫ "}
+                <b>{m.username}</b>
+                {m.role === "admin" && (
+                  <span style={{ color: "#00eaff", fontSize: 12 }}> 🛡️ Admin</span>
+                )}
+                {m.bio && (
+                  <span style={{ color: "#aaa", fontSize: 13, display: "block", marginTop: 4 }}>
+                    {m.bio}
+                  </span>
+                )}
+                {!m.online && m.lastSeenAt && (
+                  <span style={{ color: "#777", fontSize: 12, display: "block", marginTop: 2 }}>
+                    last seen {new Date(m.lastSeenAt).toLocaleDateString()}
+                  </span>
+                )}
+              </span>
+              <span style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                {m.isFriend ? (
+                  <span style={{ color: "#22c55e", fontWeight: "bold", fontSize: 14, alignSelf: "center" }}>
+                    ✓ Friends
+                  </span>
+                ) : m.requestIncoming ? (
+                  <span style={{ color: "#ffce54", fontSize: 14, alignSelf: "center" }}>
+                    Sent you a request — see above
+                  </span>
+                ) : m.requestSent ? (
+                  <span style={{ color: "#aaa", fontSize: 14, alignSelf: "center" }}>
+                    Request sent
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => addFriend(m.username)}
+                    disabled={busy}
+                    style={{
+                      padding: "8px 16px",
+                      borderRadius: 6,
+                      background: "#00eaff",
+                      border: "none",
+                      cursor: busy ? "not-allowed" : "pointer",
+                      color: "black",
+                      fontWeight: "bold",
+                      opacity: busy ? 0.6 : 1
+                    }}
+                  >
+                    Add Friend
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    localStorage.setItem("tapin_dm_username", m.username);
+                    onNavigate && onNavigate("chat");
+                  }}
+                  title="Send a private message"
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: 6,
+                    background: "#2b2d31",
+                    border: "1px solid #555",
+                    cursor: "pointer",
+                    color: "white"
+                  }}
+                >
+                  Message
+                </button>
+              </span>
+            </div>
+          ))
         )}
       </div>
 

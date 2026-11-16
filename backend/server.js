@@ -5,6 +5,7 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 const multer = require("multer");
 const { GridFSBucket, ObjectId } = require("mongodb");
 const { Server } = require("socket.io");
@@ -151,6 +152,59 @@ function publicUser(u) {
   };
 }
 
+// --- Referral codes -------------------------------------------------
+// Wesley's rule (Nov 15): members can't find each other on Tap In —
+// "it ain't like they going to be able to see who on here. You going
+// to have to know who on here." So every member gets one unique,
+// shareable referral code, e.g. DOLO45-K7Q2: the username (letters
+// and digits only, first 6) + "-" + 4 unambiguous characters
+// (no 0/O, 1/I/L, so a code read off a screenshot still types in).
+// The code is public by design — it is meant to be shared — and it
+// is NOT a password: it never logs anyone in, it only says who
+// invited a new member at signup.
+const REFERRAL_SUFFIX_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+function makeReferralCode(username) {
+  const base = String(username || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 6) || "TAPIN";
+  let suffix = "";
+  for (let i = 0; i < 4; i++) {
+    suffix += REFERRAL_SUFFIX_ALPHABET[crypto.randomInt(0, REFERRAL_SUFFIX_ALPHABET.length)];
+  }
+  return `${base}-${suffix}`;
+}
+
+async function findReferrerByCode(code) {
+  const clean = String(code || "").trim().toUpperCase();
+  if (!clean) return null;
+  return User.findOne({ referralCode: { $regex: `^${clean.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } });
+}
+
+// Backfill: accounts created before referral codes (every current
+// member) get one on next login / first load of their referral box.
+// Never touches the password, never renames anyone, never fails the
+// login if the code can't be saved — the login is the priority.
+async function ensureReferralCode(user) {
+  if (!user) return null;
+  if (user.referralCode) return user.referralCode;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const code = makeReferralCode(user.username);
+    try {
+      const clash = await User.findOne({ referralCode: code });
+      if (clash && String(clash._id) !== String(user._id)) continue;
+      user.referralCode = code;
+      await user.save();
+      return code;
+    } catch (err) {
+      // A duplicate-key race with another signup: try a fresh code.
+      if (err && err.code === 11000) continue;
+      return null;
+    }
+  }
+  return null;
+}
+
 // --- Uploads: files live in MongoDB GridFS (persistent) -------------
 // Render's disk is ephemeral, so uploads are NOT written to the
 // server filesystem. They go to GridFS in the same Atlas database, in
@@ -292,11 +346,29 @@ app.post("/auth/register", requireDb, async (req, res) => {
     // happen again for new signups (existing accounts are untouched).
     const username = typeof req.body?.username === "string" ? req.body.username.trim() : "";
     const { password } = req.body;
+    // Optional referral code from a friend's share link
+    // (?ref=DOLO45-K7Q2). A code is never required — signup works
+    // fine without one. A code that was typed in but belongs to
+    // nobody fails here, before the account is created, with a clear
+    // message so the person can fix it or sign up without it.
+    const referralCode = typeof (req.body?.referralCode || req.body?.ref) === "string"
+      ? String(req.body.referralCode || req.body.ref).trim()
+      : "";
 
     if (!username || !password) {
       return res.status(400).json({
         error: "Username and password required"
       });
+    }
+
+    let referrer = null;
+    if (referralCode) {
+      referrer = await findReferrerByCode(referralCode);
+      if (!referrer || referrer.banned) {
+        return res.status(400).json({
+          error: "That referral code doesn't belong to anyone — check the code, or sign up without one."
+        });
+      }
     }
 
     const existing = await usernameTaken(User, username);
@@ -312,8 +384,39 @@ app.post("/auth/register", requireDb, async (req, res) => {
     const user = await User.create({
       username,
       password: hashedPassword,
-      role: isOwnerUsername(username) ? "admin" : "user"
+      role: isOwnerUsername(username) ? "admin" : "user",
+      referredBy: referrer ? referrer.username : ""
     });
+
+    // Every account gets its own referral code at signup (so the new
+    // member can invite the next person right away).
+    let myCode = null;
+    try { myCode = await ensureReferralCode(user); } catch (err) { /* signup already succeeded */ }
+
+    // Referred signup: the new member and the referrer become friends
+    // automatically, both ways — the same mutual add the auto-friend
+    // helper uses, so no Accept/Decline tap is needed. Stale pending
+    // requests between them are cleared. The referrer gets an Alert
+    // that someone joined with their code.
+    if (referrer) {
+      try {
+        const freshReferrer = await User.findById(referrer._id);
+        if (freshReferrer && !freshReferrer.banned) {
+          removeFriendRequest(freshReferrer, user.username);
+          removeFriendRequest(user, freshReferrer.username);
+          addFriendBothWays(freshReferrer, user);
+          await freshReferrer.save();
+          await user.save();
+          await createNotification(freshReferrer._id, {
+            type: "member_joined",
+            title: "Someone joined with your referral code",
+            body: `${username} signed up with your referral code — you're friends now.`,
+            fromUsername: username,
+            refId: username
+          });
+        }
+      } catch (err) { /* referral friending must never break signup */ }
+    }
 
     // A new member joined: tell the owner (admins only — not every
     // member, or every signup would spam the whole app).
@@ -334,7 +437,9 @@ app.post("/auth/register", requireDb, async (req, res) => {
     res.json({
       success: true,
       userId: user._id,
-      role: user.role
+      role: user.role,
+      referralCode: myCode || user.referralCode || null,
+      referredBy: user.referredBy || ""
     });
   } catch (err) {
     res.status(500).json({
@@ -387,6 +492,11 @@ app.post("/auth/login", requireDb, async (req, res) => {
       await user.save();
     }
 
+    // Backfill: accounts created before referral codes get theirs
+    // on login, so every existing member has a code to share.
+    let myCode = user.referralCode || null;
+    try { myCode = (await ensureReferralCode(user)) || myCode; } catch (err) { /* login already succeeded */ }
+
     const token = jwt.sign(
       {
         id: user._id,
@@ -407,6 +517,8 @@ app.post("/auth/login", requireDb, async (req, res) => {
         username: user.username,
         bio: user.bio,
         avatar: user.avatar,
+        referralCode: myCode,
+        referredBy: user.referredBy || "",
         profileSong: user.profileSong && user.profileSong.url ? user.profileSong : null,
         role: user.role,
         banned: Boolean(user.banned)
@@ -767,6 +879,88 @@ async function loadRoomOr404(req, res) {
   }
   return room;
 }
+
+// --- Referral codes + member discovery -----------------------------
+// The find problem (Wesley, Nov 15): a member could only find
+// someone if they already knew the exact username — there was no
+// place to see who is on Tap In. Two fixes, both members-only:
+//   1. referral codes — your own code + share link, and signing up
+//      from a friend's link friends you with them automatically;
+//   2. a searchable member directory — every member, online dot,
+//      last seen, bio snippet, Add Friend button.
+
+// GET /referral/me — my own referral code + share details. Logged-in
+// only. Backfills a code for accounts created before referral codes.
+app.get("/referral/me", requireDb, requireAuth, async (req, res) => {
+  try {
+    let code = req.user.referralCode || null;
+    try { code = (await ensureReferralCode(req.user)) || code; } catch (err) { /* code is a bonus */ }
+    const referralCount = await User.countDocuments({ referredBy: req.user.username });
+    res.json({
+      success: true,
+      code,
+      referredBy: req.user.referredBy || "",
+      referralCount
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /referral/:code — public lookup for a share link: does this
+// code belong to anyone, and who? Returns ONLY the referrer's
+// username — never an email, id, or anything else. Used by the
+// landing / signup pages to show "You were invited by Dolo45".
+app.get("/referral/:code", requireDb, async (req, res) => {
+  try {
+    const referrer = await findReferrerByCode(req.params.code);
+    if (!referrer || referrer.banned) return res.json({ success: true, valid: false });
+    res.json({ success: true, valid: true, username: referrer.username });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /members — searchable member directory. Logged-in only.
+// Everyone who is on Tap In, so a member can actually find people
+// instead of having to already know their exact username. Banned
+// accounts (including the separate banned lowercase "dolo45") never
+// appear, and neither do you — you already know yourself. Only
+// username, bio snippet, avatar, role, online / last seen, and
+// whether you are already friends (or have a request pending) —
+// never emails, phone numbers, or passwords.
+app.get("/members", requireDb, requireAuth, async (req, res) => {
+  try {
+    const q = typeof req.query.search === "string" ? req.query.search.trim() : "";
+    const filter = { banned: { $ne: true }, _id: { $ne: req.user._id } };
+    if (q) {
+      filter.username = { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
+    }
+    const users = await User.find(filter)
+      .select("_id username bio avatar role lastSeenAt friendRequests")
+      .sort({ username: 1 })
+      .limit(100);
+    const myFriends = req.user.friends || [];
+    const myIncoming = req.user.friendRequests || [];
+    res.json({
+      success: true,
+      members: users.map((u) => ({
+        id: u._id,
+        username: u.username,
+        bio: (u.bio || "").slice(0, 120),
+        avatar: dolo45Avatar(u),
+        role: u.role,
+        online: onlineUserIds.has(String(u._id)),
+        lastSeenAt: u.lastSeenAt || null,
+        isFriend: myFriends.some((f) => sameUsername(f, u.username)),
+        requestSent: (u.friendRequests || []).some((r) => sameUsername(r.username, req.user.username)),
+        requestIncoming: myIncoming.some((r) => sameUsername(r.username, u.username))
+      })).sort((a, b) => (b.online - a.online) || a.username.localeCompare(b.username))
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // GET /users — find members by username (for starting a DM or adding
 // to a group). Logged-in only; returns id + username, never passwords.

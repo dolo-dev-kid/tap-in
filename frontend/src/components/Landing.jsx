@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 import axiosInstance from "../api/axios";
 import MyMerch from "./MyMerch";
+import { readRefFromUrl } from "./ReferralBox";
 
 export default function Landing() {
   const [health, setHealth] = useState(null);
+  const [invitedBy, setInvitedBy] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const loggedInUsername =
     typeof localStorage !== "undefined"
       ? localStorage.getItem("tapin_username")
@@ -18,6 +21,19 @@ export default function Landing() {
       .get("/health")
       .then((res) => setHealth(res.data))
       .catch(() => setHealth({ ok: false, db: "unreachable" }));
+    // Referral link (?ref=DOLO45-K7Q2): say who invited you up
+    // front, so a new person knows the link is real before signing
+    // up — and that signing up from it makes you friends.
+    const ref = readRefFromUrl();
+    if (ref) {
+      setInviteCode(ref.toUpperCase());
+      axiosInstance
+        .get(`/referral/${encodeURIComponent(ref)}`)
+        .then((res) => {
+          if (res.data?.valid) setInvitedBy(res.data.username);
+        })
+        .catch(() => { /* banner is a bonus */ });
+    }
   }, []);
 
   const dbStatus =
@@ -33,6 +49,23 @@ export default function Landing() {
     <div style={{ padding: 40, color: "white" }}>
       <h1>Welcome to Tap-In</h1>
       <p style={{ marginTop: 20, fontSize: 18 }}>Your social platform for peer-to-peer calling, video chat, live streaming, and group communication.</p>
+
+      {invitedBy && (
+        <div
+          style={{
+            marginTop: 20,
+            background: "#1a2b33",
+            border: "2px solid #00eaff",
+            borderRadius: 12,
+            padding: 16,
+            maxWidth: 560,
+            fontSize: 16
+          }}
+        >
+          👋 You were invited by <b style={{ color: "#00eaff" }}>{invitedBy}</b>
+          {inviteCode ? ` (code ${inviteCode})` : ""} — sign up and you'll be friends automatically.
+        </div>
+      )}
 
       <MyMerch />
 

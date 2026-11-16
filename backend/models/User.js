@@ -49,6 +49,27 @@ const UserSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  // Referral code (Wesley, Nov 15): every member gets one unique,
+  // shareable code, e.g. DOLO45-K7Q2. It is how a new person finds
+  // Tap In — they sign up from a friend's link and are automatically
+  // friended with that friend. The code is public by design (it is
+  // meant to be shared); it is NOT a password and never grants
+  // access on its own. sparse + unique: accounts created before
+  // referral codes get one on next login (backfill), never by
+  // resetting anything.
+  referralCode: {
+    type: String,
+    unique: true,
+    sparse: true,
+    default: null
+  },
+  // Username of the member whose referral code this account signed
+  // up with ("" when nobody referred them). Stored as a username,
+  // like friends are — never an email or phone number.
+  referredBy: {
+    type: String,
+    default: ""
+  },
   friends: {
     type: [String],
     default: []

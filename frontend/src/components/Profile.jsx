@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import axiosInstance from "../api/axios";
 import { uploadFile, mediaUrl } from "../api/upload";
 import MyMerch from "./MyMerch";
+import ReferralBox from "./ReferralBox";
 import { DOLO45_IG } from "../data/dolo45Photos";
 
 // Dolo45's profile pic is his real Instagram profile pic
@@ -376,6 +377,8 @@ export default function Profile() {
           </button>
         )}
       </div>
+
+      {userId && <ReferralBox />}
 
       {isDolo45 && <MyMerch />}
     </div>
