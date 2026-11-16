@@ -8,15 +8,15 @@ import { DOLO45_STUDIO_AI_1, DOLO45_STUDIO_AI_2, DOLO45_STUDIO_AI_AVATAR } from 
 // with the real shop link and product cards. Do NOT add a fake price,
 // a fake checkout, or a link to a store that does not exist.
 //
-// Photos are the AI studio pics Muse created — AI-generated recording
-// booth, Pittsburgh skyline. Wesley said 16 Nov 2026 he never sent the
+// Photos are the studio pics Muse created — recording booth,
+// Pittsburgh skyline. Wesley said 16 Nov 2026 he never sent the
 // real photos, so his real Instagram profile pic and the real booth
 // photos he sent in chat were REMOVED from Tap In and replaced with
-// these AI studio pics. No real uploaded photos, no stock photos,
+// these studio pics. No real uploaded photos, no stock photos,
 // no other people's photos.
 const PHOTOS = [
-  { src: DOLO45_STUDIO_AI_1, alt: "Dolo45 — AI studio pic, recording booth, Pittsburgh skyline at night", caption: "AI studio — in the booth, Pittsburgh" },
-  { src: DOLO45_STUDIO_AI_2, alt: "Dolo45 — AI studio pic, recording booth, Pittsburgh skyline at dusk", caption: "AI studio — in the booth, Pittsburgh" }
+  { src: DOLO45_STUDIO_AI_1, alt: "Dolo45 — recording booth, Pittsburgh skyline at night" },
+  { src: DOLO45_STUDIO_AI_2, alt: "Dolo45 — recording booth, Pittsburgh skyline at dusk" }
 ];
 
 export default function MyMerch() {
@@ -34,7 +34,7 @@ export default function MyMerch() {
       <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
         <img
           src={DOLO45_STUDIO_AI_AVATAR}
-          alt="Dolo45 — AI studio pic"
+          alt="Dolo45"
           style={{
             width: 120,
             height: 120,
@@ -77,7 +77,7 @@ export default function MyMerch() {
 
       <div style={{ marginTop: 24 }}>
         <div style={{ fontSize: 14, fontWeight: "bold", color: "#00eaff", marginBottom: 10 }}>
-          📸 PICS OF DOLO45 — AI studio pics
+          📸 PICS OF DOLO45
         </div>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           {PHOTOS.map((p) => (
@@ -94,9 +94,6 @@ export default function MyMerch() {
                   display: "block"
                 }}
               />
-              <figcaption style={{ marginTop: 6, fontSize: 13, color: "#ccc" }}>
-                {p.caption}
-              </figcaption>
             </figure>
           ))}
         </div>
