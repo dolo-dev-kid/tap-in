@@ -119,6 +119,17 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// Dolo45's profile pic is his real Instagram profile pic
+// (@nho_life_dolo45), shipped as a frontend asset. Shown ONLY for the
+// exact username "Dolo45" (case-sensitive — the separate banned
+// lowercase "dolo45" account never gets it), and only when the account
+// has no saved avatar of its own. A saved avatar always wins.
+const DOLO45_AVATAR_URL = "https://tap-in-cakt.onrender.com/dolo45-ig.jpg";
+function dolo45Avatar(u) {
+  if (u && u.username === "Dolo45" && !u.avatar) return DOLO45_AVATAR_URL;
+  return u.avatar || "";
+}
+
 // Public-safe shape for a user in admin listings: never include the
 // password field (hash included — it is never selected here).
 function publicUser(u) {
@@ -126,7 +137,7 @@ function publicUser(u) {
     id: u._id,
     username: u.username,
     bio: u.bio || "",
-    avatar: u.avatar || "",
+    avatar: dolo45Avatar(u),
     role: u.role,
     banned: Boolean(u.banned),
     createdAt: u.createdAt,
@@ -411,7 +422,7 @@ app.get("/users/:id", requireDb, async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ error: "User not found" });
-    res.json({ id: user._id, username: user.username, bio: user.bio, avatar: user.avatar, profileSong: user.profileSong && user.profileSong.url ? user.profileSong : null, friends: user.friends, servers: user.servers });
+    res.json({ id: user._id, username: user.username, bio: user.bio, avatar: dolo45Avatar(user), profileSong: user.profileSong && user.profileSong.url ? user.profileSong : null, friends: user.friends, servers: user.servers });
   } catch (err) {
     res.status(500).json({
       error: err.message

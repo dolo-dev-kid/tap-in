@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import axiosInstance from "../api/axios";
+import MyMerch from "./MyMerch";
 
 export default function Landing() {
   const [health, setHealth] = useState(null);
@@ -32,6 +33,8 @@ export default function Landing() {
     <div style={{ padding: 40, color: "white" }}>
       <h1>Welcome to Tap-In</h1>
       <p style={{ marginTop: 20, fontSize: 18 }}>Your social platform for peer-to-peer calling, video chat, live streaming, and group communication.</p>
+
+      <MyMerch />
 
       <div
         style={{

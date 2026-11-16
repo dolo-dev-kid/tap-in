@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import axiosInstance from "../api/axios";
 import { uploadFile, mediaUrl } from "../api/upload";
+import MyMerch from "./MyMerch";
+
+// Dolo45's profile pic is his real Instagram profile pic
+// (@nho_life_dolo45), shipped as a repo asset. Used ONLY as the
+// fallback for the exact username "Dolo45" (case-sensitive — the
+// separate banned lowercase "dolo45" account never gets it). A saved
+// avatar on his account always wins over this fallback.
+export const DOLO45_AVATAR = "/dolo45-ig.jpg";
 
 // Profile shows the LOGGED-IN user's own data — never a template.
 // Display name is the account username (from localStorage, then from the
@@ -234,7 +242,12 @@ export default function Profile() {
   };
 
   const initial = (displayName || "?").charAt(0);
-  const avatarSrc = avatarPreview || mediaUrl(avatar) || avatarSvg(initial);
+  const isDolo45 = displayName === "Dolo45";
+  const avatarSrc =
+    avatarPreview ||
+    mediaUrl(avatar) ||
+    (isDolo45 ? DOLO45_AVATAR : "") ||
+    avatarSvg(initial);
 
   return (
     <div style={{ padding: 40, color: "white" }}>
@@ -289,8 +302,7 @@ export default function Profile() {
               onChange={(e) => setBioInput(e.target.value)}
               placeholder="Bio"
               style={input}
-            />
-            <label style={{ display: "block", color: "#aaa", fontSize: 13, marginBottom: 6 }}>
+            />            <label style={{ display: "block", color: "#aaa", fontSize: 13, marginBottom: 6 }}>
               Profile photo — upload a picture (jpg, png, gif, webp, up to 10 MB):
             </label>
             <input
@@ -362,6 +374,8 @@ export default function Profile() {
           </button>
         )}
       </div>
+
+      {isDolo45 && <MyMerch />}
     </div>
   );
 }
