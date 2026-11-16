@@ -1,6 +1,10 @@
 // SocialLinks — a member's own other platforms. Values are pasted by
 // the member themself: a full URL or a handle. Nothing is auto-filled,
 // nothing is imported, and Tap In never posts to these platforms.
+// Discord: a username shows as text "Discord: <username>"; a server
+// invite link (discord.gg/…) shows as "Discord: <username>" linking
+// to the invite — the username shown is the member's Tap In username
+// (for Dolo45, his Discord username is Dolo45 too).
 // Handles turn into the platform's profile URL; full URLs are used
 // as-is (https only — the backend rejects anything else).
 export const SOCIAL_PLATFORMS = [
@@ -34,8 +38,10 @@ export function hasSocialLinks(links) {
 }
 
 // Tappable links to a member's other platforms. Members-only context
-// only — never rendered on a public page.
-export default function SocialLinksRow({ links }) {
+// only — never rendered on a public page. `username` is the member's
+// Tap In username, shown on the Discord entry (their Discord username
+// for Dolo45 is the same).
+export default function SocialLinksRow({ links, username }) {
   if (!hasSocialLinks(links)) return null;
   return (
     <span style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
@@ -50,6 +56,11 @@ export default function SocialLinksRow({ links }) {
             </span>
           );
         }
+        // Discord server invite: show the member's username on the
+        // link itself — "Discord: Dolo45" — linking to their invite.
+        const label = p.key === "discord" && username
+          ? `${p.icon} ${p.label}: ${username}`
+          : `${p.icon} ${p.label}`;
         return (
           <a
             key={p.key}
@@ -59,7 +70,7 @@ export default function SocialLinksRow({ links }) {
             title={`${p.label}: ${links[p.key]}`}
             style={{ color: "#00eaff", fontSize: 13, textDecoration: "none" }}
           >
-            {p.icon} {p.label}
+            {label}
           </a>
         );
       })}

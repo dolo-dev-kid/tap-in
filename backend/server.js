@@ -241,11 +241,14 @@ function publicSocialLinks(u) {
   // as soon as any link is saved, the saved set is shown as-is.
   // Links only — no OAuth, no follower import, no auto-posting.
   // Discord IS seeded for Dolo45 now: Wesley gave his Discord
-  // username "Dolo45" on 16 Nov 2026. Same pattern as his other six:
-  // exact username "Dolo45" only, only when he has no saved links
-  // at all, a saved link always wins, banned lowercase "dolo45"
-  // never gets it. Discord has no profile URL, so the value is the
-  // username itself, shown as "Discord: Dolo45".
+  // username "Dolo45" AND his server invite link on 16 Nov 2026.
+  // Same pattern as his other six: exact username "Dolo45" only,
+  // only when he has no saved links at all, a saved link always
+  // wins, banned lowercase "dolo45" never gets it. The seeded value
+  // is the invite link — the frontend shows it as "Discord: Dolo45"
+  // (his username) linking to the invite. The invite is for Tap In
+  // profile / Find Members ONLY — it is never posted publicly
+  // anywhere else.
   if (u && u.username === "Dolo45" && !SOCIAL_PLATFORMS.some((k) => out[k])) {
     return { ...DOLO45_SOCIAL_LINKS };
   }
@@ -260,8 +263,9 @@ const DOLO45_SOCIAL_LINKS = {
   youtube: "https://www.youtube.com/@Dolo45-ent",
   soundcloud: "https://soundcloud.com/dolo45",
   bandlab: "pgh_dolo45",
-  // Wesley's Discord username, given by him 16 Nov 2026.
-  discord: "Dolo45"
+  // Wesley's Discord server invite link, given by him 16 Nov 2026.
+  // Tap In profile / Find Members ONLY — never posted publicly.
+  discord: "https://discord.gg/w6aX8NDK"
 };
 
 // --- Email (verification + admin 2FA + password reset) --------------

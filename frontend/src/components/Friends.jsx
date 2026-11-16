@@ -353,7 +353,7 @@ export default function Friends({ onNavigate }) {
                     {m.bio}
                   </span>
                 )}
-                <SocialLinksRow links={m.socialLinks} />
+                <SocialLinksRow links={m.socialLinks} username={m.username} />
                 {!m.online && m.lastSeenAt && (
                   <span style={{ color: "#777", fontSize: 12, display: "block", marginTop: 2 }}>
                     last seen {new Date(m.lastSeenAt).toLocaleDateString()}

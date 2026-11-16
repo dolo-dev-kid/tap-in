@@ -335,7 +335,7 @@ export default function Profile() {
         <ProfileSongPlayer song={profileSong} />
         <div style={{ marginTop: 16 }}>
           <div style={{ fontSize: 13, color: "#aaa" }}>🌐 My other platforms</div>
-          <SocialLinksRow links={socialLinks} />
+          <SocialLinksRow links={socialLinks} username={displayName} />
           {!editing && !Object.values(socialLinks).some(Boolean) && (
             <p style={{ marginTop: 4, color: "#777", fontSize: 13 }}>
               No other platforms linked yet — tap Edit Profile to add them.
