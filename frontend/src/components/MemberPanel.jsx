@@ -69,15 +69,15 @@ export default function MemberPanel({ onNavigate }) {
   };
 
   return (
-    <div style={{ width: 260, height: "100%", flexShrink: 0, background: "#2b2d31", padding: 16, paddingTop: 56, overflowY: "auto", color: "white" }}>
-      <h3 style={{ fontSize: 13, color: "#00eaff", letterSpacing: 1 }}>🔴 LIVE NOW</h3>
+    <div style={{ width: "100%", height: "100%", flex: 1, minHeight: 0, background: "#18181b", padding: 16, overflowY: "auto", color: "#efeff1" }}>
+      <h3 style={{ fontSize: 15, color: "#00eaff", letterSpacing: 1 }}>🔴 LIVE NOW</h3>
       {live.length === 0 ? (
-        <p style={{ marginTop: 8, color: "#aaa", fontSize: 13 }}>Nobody is live right now.</p>
+        <p style={{ marginTop: 8, color: "#d3d3d8", fontSize: 15 }}>Nobody is live right now.</p>
       ) : (
         live.map((b, i) => (
-          <div key={`${b.username}-${b.room}-${i}`} style={{ marginTop: 10, background: "#1e1f22", padding: 10, borderRadius: 8 }}>
+          <div key={`${b.username}-${b.room}-${i}`} style={{ marginTop: 10, background: "#0e0e10", padding: 12, borderRadius: 8 }}>
             <div style={{ fontWeight: "bold" }}>🔴 {b.username}<VerifiedBadge verified={members.find((m) => m.username === b.username)?.verified} /></div>
-            <div style={{ color: "#aaa", fontSize: 12, marginTop: 4 }}>
+            <div style={{ color: "#d3d3d8", fontSize: 14, marginTop: 4 }}>
               Room “{b.room}” · live {since(b.startedAt)}
             </div>
             <button
@@ -90,13 +90,13 @@ export default function MemberPanel({ onNavigate }) {
         ))
       )}
 
-      <h3 style={{ fontSize: 13, color: "#00eaff", letterSpacing: 1, marginTop: 24 }}>🟢 ONLINE NOW</h3>
+      <h3 style={{ fontSize: 15, color: "#00eaff", letterSpacing: 1, marginTop: 24 }}>🟢 ONLINE NOW</h3>
       {online.length === 0 && presenceOnline.length === 0 ? (
-        <p style={{ marginTop: 8, color: "#aaa", fontSize: 13 }}>Nobody else is online right now.</p>
+        <p style={{ marginTop: 8, color: "#d3d3d8", fontSize: 15 }}>Nobody else is online right now.</p>
       ) : (
         <>
           {online.map((m) => (
-            <div key={m.id} style={{ marginTop: 8, fontSize: 14, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
+            <div key={m.id} style={{ marginTop: 8, fontSize: 16, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
               <span>🟢 {m.username}<VerifiedBadge verified={m.verified} />{m.role === "admin" ? " 🛡️" : ""}</span>
               {isAdmin && (
                 <button onClick={() => setViewingProfileId(m.id)} title="Admin only: view full profile" style={{ padding: "3px 8px", borderRadius: 6, background: "transparent", color: "#00eaff", border: "1px solid #00eaff", cursor: "pointer", fontSize: 11 }}>👤 View</button>
@@ -104,14 +104,14 @@ export default function MemberPanel({ onNavigate }) {
             </div>
           ))}
           {presenceOnline.map((p) => (
-            <div key={p.userId} style={{ marginTop: 8, fontSize: 14 }}>🟢 {p.username}<VerifiedBadge verified={p.verified} /></div>
+            <div key={p.userId} style={{ marginTop: 8, fontSize: 16 }}>🟢 {p.username}<VerifiedBadge verified={p.verified} /></div>
           ))}
         </>
       )}
       {viewingProfileId && (
         <AdminProfileView userId={viewingProfileId} onClose={() => setViewingProfileId(null)} />
       )}
-      {error && <p style={{ marginTop: 16, color: "#ffce54", fontSize: 12 }}>{error}</p>}
+      {error && <p style={{ marginTop: 16, color: "#ffce54", fontSize: 14 }}>{error}</p>}
     </div>
   );
 }

@@ -1,7 +1,37 @@
+// Tap In — Twitch layout (Nov 16, 2026).
+//
+// Why this rewrite: Wesley said "The app.jsx is trash I can't see
+// shit" — and he was right. The old shell had THREE things eating the
+// screen at once: a 72px Discord server rail + a 240px channel
+// sidebar (312px fixed, before any content) AND a 260px member panel
+// rendered as an absolute overlay ON TOP of the main area. On a phone
+// (~375px wide) that left about 60px for the actual page. Text was
+// 11–14px grey (#80848e / #aaa) on grey (#313338), and pages sat in
+// narrow 560px boxes. So: make it like Twitch.
+//
+// New layout, Twitch-style:
+// - Top bar (56px): hamburger (mobile), TAP IN logo, big nav
+//   (Browse / Live / Chat / Friends / Profile), search, Alerts bell
+//   with unread badge, username + Log out (or Log in / Sign up).
+// - ONE left nav (240px, collapsible): the channel sidebar. The
+//   Discord server rail is gone — servers still live in the sidebar's
+//   SERVERS section. On phones the nav is hidden until the hamburger
+//   opens it as a drawer, so the page takes the whole screen.
+// - Main area: flex:1, full width, full height, Twitch-dark
+//   (#0e0e10), 16px base text, white/high-contrast. No narrow
+//   centered column, nothing hidden behind a panel.
+// - Right panel (LIVE NOW / ONLINE NOW): a REAL flex column, 340px,
+//   only on live/chat pages — never an absolute overlay, so it can't
+//   cover the page. Closable with the "Chat" button in the top bar /
+//   page header; on phones it opens as a drawer instead.
+// - Live stream stays front and center: the video page is the main
+//   area, chat sits in the right column when live.
+// Auth, admin (exact Dolo45 only), banned lowercase dolo45, referral,
+// uploads, private chats, alerts, social links, Stream Destinations —
+// all untouched. No fake/sample data, ever.
 import { useEffect, useState } from "react";
 import io from "socket.io-client";
 import axiosInstance from "./api/axios";
-import Sidebar from "./components/Sidebar";
 import ChannelSidebar from "./components/ChannelSidebar";
 import MemberPanel from "./components/MemberPanel";
 import Landing from "./components/Landing";
@@ -17,16 +47,23 @@ import Overlay from "./components/Overlay";
 import Settings from "./components/Settings";
 import AdminPanel from "./components/AdminPanel";
 
-// Twitch + Discord layout, Streamlabs feel: Discord server rail +
-// channels on the left, a Twitch-style main area that takes the
-// WHOLE page (full width, full height — no narrow centered column),
-// and the live/chat panel on the right as a collapsible OVERLAY, so
-// it never squeezes the main content. Every old page is still
-// reachable — same page ids, same navigate(). Dark Discord palette
-// (#1e1f22 / #2b2d31 / #313338) with the existing cyan (#00eaff)
-// accent. Auth, admin (exact Dolo45 only) and the banned lowercase
-// dolo45 account are untouched.
+// Pages where the LIVE NOW / ONLINE NOW right column belongs.
 const MEMBER_PANEL_PAGES = ["chat", "video", "servers", "dashboard"];
+
+const PAGE_TITLES = {
+  landing: "Home",
+  feed: "Feed",
+  video: "Video Rooms — Live",
+  chat: "Chat",
+  profile: "Profile",
+  friends: "Friends",
+  notifications: "Alerts",
+  servers: "Servers",
+  dashboard: "Stream Dashboard",
+  overlay: "Overlay",
+  settings: "Settings",
+  admin: "Admin",
+};
 
 export default function App() {
   const [page, setPage] = useState("landing");
@@ -36,6 +73,17 @@ export default function App() {
   const [liveRoom, setLiveRoom] = useState("");
   const [servers, setServers] = useState([]);
   const [selectedServer, setSelectedServer] = useState("");
+  // Left nav: open on desktop, closed on phones (CSS also hides it
+  // under 900px unless .open — this state drives that class).
+  const [leftOpen, setLeftOpen] = useState(
+    () => typeof window === "undefined" || window.innerWidth > 900
+  );
+  // Right live/chat column: open on desktop live pages, closed on
+  // phones — the user opens it with the Chat button when they want it.
+  const [rightOpen, setRightOpen] = useState(
+    () => typeof window === "undefined" || window.innerWidth > 900
+  );
+  const [topSearch, setTopSearch] = useState("");
   // Auth state lives HERE, not scattered as localStorage reads in
   // every component. That was the Log in / Sign up bug (Nov 16):
   // the shell read tapin_username once at mount, so after a login
@@ -102,6 +150,16 @@ export default function App() {
   const navigate = (nextPage, room) => {
     if (room) setLiveRoom(room);
     setPage(nextPage);
+    // On phones, tapping a nav item closes the drawer so the page
+    // itself is what you see — not the menu covering it.
+    if (typeof window !== "undefined" && window.innerWidth <= 900) setLeftOpen(false);
+  };
+
+  // Top-bar search: jump to Friends and focus its search box.
+  const submitTopSearch = (e) => {
+    e.preventDefault();
+    navigate("friends");
+    setTimeout(() => window.dispatchEvent(new Event("tapin:focus-friend-search")), 50);
   };
 
   const loadBadgeCounts = () => {
@@ -119,7 +177,7 @@ export default function App() {
       .catch(() => { /* badge is a bonus */ });
   };
 
-  // Real servers for the rail + channel sidebar, from the member's
+  // Real servers for the nav + channel sidebar, from the member's
   // own account. Empty when logged out or when they have none.
   const loadServers = () => {
     const userId =
@@ -128,7 +186,7 @@ export default function App() {
     axiosInstance
       .get(`/users/${userId}`)
       .then((res) => setServers(res.data?.servers || []))
-      .catch(() => { /* servers are a bonus — the rail still works */ });
+      .catch(() => { /* servers are a bonus — the nav still works */ });
   };
 
   // Badge counts: pending friend requests on the Friends tab, unread
@@ -170,64 +228,169 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const showMemberPanel = MEMBER_PANEL_PAGES.includes(page);
-  // Right panel is an overlay, not a column — open by default on
-  // live/chat pages, closable with the 👥 button so the tab takes
-  // the full page when you want it to.
-  const [memberPanelOpen, setMemberPanelOpen] = useState(true);
+  const showRightPanel = MEMBER_PANEL_PAGES.includes(page);
+  const isAdmin = authUser?.role === "admin";
+  const username = authUser?.username || null;
+
+  const topNavBtn = (id, label, badge = 0) => (
+    <button
+      key={id}
+      onClick={() => navigate(id)}
+      className="tapin-topnav-btn"
+      style={{
+        background: page === id ? "#00eaff" : "transparent",
+        color: page === id ? "#000" : "#efeff1",
+      }}
+    >
+      {label}
+      {badge > 0 && (
+        <span className="tapin-badge">{badge > 9 ? "9+" : badge}</span>
+      )}
+    </button>
+  );
 
   return (
-    <div style={{ display: "flex", height: "100vh", width: "100vw", background: "#313338", color: "#fff", overflow: "hidden" }}>
-      <Sidebar
-        onNavigate={navigate}
-        page={page}
-        servers={servers}
-        selectedServer={selectedServer}
-        onSelectServer={setSelectedServer}
-      />
-      <ChannelSidebar
-        page={page}
-        onNavigate={navigate}
-        authUser={authUser}
-        onLogout={handleLogout}
-        servers={servers}
-        selectedServer={selectedServer}
-        onSelectServer={setSelectedServer}
-        friendRequestCount={friendRequestCount}
-        notificationCount={notificationCount}
-      />
-
-      <div style={{ flex: 1, minWidth: 0, height: "100vh", overflowY: "auto", overflowX: "hidden", background: "#313338", position: "relative" }}>
-        {showMemberPanel && (
-          <button
-            onClick={() => setMemberPanelOpen((v) => !v)}
-            title={memberPanelOpen ? "Hide live & online panel" : "Show live & online panel"}
-            style={{ position: "absolute", top: 12, right: 12, zIndex: 30, padding: "8px 12px", borderRadius: 8, background: "#2b2d31", color: "#00eaff", border: "1px solid #00eaff", cursor: "pointer", fontWeight: "bold", fontSize: 13 }}
-          >
-            {memberPanelOpen ? "👥 Hide panel" : "👥 Live & online"}
-          </button>
-        )}
-        {page === "landing" && <Landing authUser={authUser} />}
-        {page === "feed" && <Feed />}
-        {page === "video" && <VideoChat initialRoom={liveRoom} />}
-        {page === "chat" && <ChatPanel />}
-        {page === "profile" && <Profile />}
-        {page === "friends" && <Friends onNavigate={navigate} />}
-        {page === "notifications" && (
-          <Notifications onNavigate={navigate} onCountChange={setNotificationCount} />
-        )}
-        {page === "servers" && <Servers />}
-        {page === "dashboard" && <StreamDashboard onNavigate={navigate} />}
-        {page === "overlay" && <Overlay />}
-        {page === "settings" && <Settings />}
-        {page === "admin" && <AdminPanel />}
-      </div>
-
-      {showMemberPanel && memberPanelOpen && (
-        <div style={{ position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 25, boxShadow: "-8px 0 24px rgba(0,0,0,0.5)", borderLeft: "1px solid #1e1f22" }}>
-          <MemberPanel onNavigate={navigate} />
+    <div className="tapin-root">
+      {/* ── Twitch-style top bar ─────────────────────────────── */}
+      <header className="tapin-topbar">
+        <button
+          className="tapin-hamburger"
+          onClick={() => setLeftOpen((v) => !v)}
+          aria-label={leftOpen ? "Hide menu" : "Show menu"}
+          title="Menu"
+        >
+          ☰
+        </button>
+        <button
+          className="tapin-logo"
+          onClick={() => navigate("landing")}
+          title="Tap In — Home"
+        >
+          <span className="tapin-logo-badge">D45</span>
+          TAP&nbsp;IN
+        </button>
+        <nav className="tapin-topnav" aria-label="Main">
+          {topNavBtn("feed", "Browse")}
+          {topNavBtn("dashboard", "🔴 Live")}
+          {topNavBtn("chat", "Chat")}
+          {topNavBtn("friends", "Friends", friendRequestCount)}
+          {topNavBtn("profile", "Profile")}
+          {isAdmin && topNavBtn("admin", "🛡️ Admin")}
+        </nav>
+        <form className="tapin-topsearch" onSubmit={submitTopSearch}>
+          <input
+            type="search"
+            value={topSearch}
+            onChange={(e) => setTopSearch(e.target.value)}
+            placeholder="Find a friend or chat…"
+            aria-label="Find a friend or chat"
+          />
+          <button type="submit" aria-label="Search">🔍</button>
+        </form>
+        <div className="tapin-topbar-right">
+          {showRightPanel && (
+            <button
+              className="tapin-panel-toggle"
+              onClick={() => setRightOpen((v) => !v)}
+              title={rightOpen ? "Hide live & online panel" : "Show live & online panel"}
+            >
+              {rightOpen ? "💬 Hide chat" : "💬 Chat"}
+            </button>
+          )}
+          {username ? (
+            <>
+              <button
+                className="tapin-bell"
+                onClick={() => navigate("notifications")}
+                title="Alerts"
+                aria-label={`Alerts, ${notificationCount} unread`}
+              >
+                🔔
+                {notificationCount > 0 && (
+                  <span className="tapin-badge">{notificationCount > 9 ? "9+" : notificationCount}</span>
+                )}
+              </button>
+              <span className="tapin-user-chip" title={`Logged in as ${username}`}>
+                {username}
+              </span>
+              <button className="tapin-logout-btn" onClick={handleLogout}>Log out</button>
+            </>
+          ) : (
+            <>
+              <a className="tapin-login-btn" href="#/login">Log in</a>
+              <a className="tapin-signup-btn" href="#/register">Sign up</a>
+            </>
+          )}
         </div>
-      )}
+      </header>
+
+      {/* ── Body: left nav | main | right live/chat column ───── */}
+      <div className="tapin-body">
+        <div className={`tapin-left ${leftOpen ? "open" : "closed"}`}>
+          <ChannelSidebar
+            page={page}
+            onNavigate={navigate}
+            authUser={authUser}
+            onLogout={handleLogout}
+            servers={servers}
+            selectedServer={selectedServer}
+            onSelectServer={setSelectedServer}
+            friendRequestCount={friendRequestCount}
+            notificationCount={notificationCount}
+          />
+        </div>
+        {leftOpen && (
+          <button
+            className="tapin-left-scrim"
+            aria-label="Close menu"
+            onClick={() => setLeftOpen(false)}
+          />
+        )}
+
+        <main className="tapin-main">
+          <div className="tapin-page-head">
+            <h1>{PAGE_TITLES[page] || "Tap In"}</h1>
+            {showRightPanel && (
+              <button
+                className="tapin-panel-toggle"
+                onClick={() => setRightOpen((v) => !v)}
+              >
+                {rightOpen ? "💬 Hide chat" : "💬 Show chat"}
+              </button>
+            )}
+          </div>
+          {page === "landing" && <Landing authUser={authUser} />}
+          {page === "feed" && <Feed />}
+          {page === "video" && <VideoChat initialRoom={liveRoom} />}
+          {page === "chat" && <ChatPanel />}
+          {page === "profile" && <Profile />}
+          {page === "friends" && <Friends onNavigate={navigate} />}
+          {page === "notifications" && (
+            <Notifications onNavigate={navigate} onCountChange={setNotificationCount} />
+          )}
+          {page === "servers" && <Servers />}
+          {page === "dashboard" && <StreamDashboard onNavigate={navigate} />}
+          {page === "overlay" && <Overlay />}
+          {page === "settings" && <Settings />}
+          {page === "admin" && <AdminPanel />}
+        </main>
+
+        {showRightPanel && rightOpen && (
+          <aside className="tapin-right">
+            <div className="tapin-right-head">
+              <span>🔴 LIVE &amp; 🟢 ONLINE</span>
+              <button
+                className="tapin-right-close"
+                onClick={() => setRightOpen(false)}
+                aria-label="Hide live and online panel"
+              >
+                ✕
+              </button>
+            </div>
+            <MemberPanel onNavigate={navigate} />
+          </aside>
+        )}
+      </div>
     </div>
   );
 }

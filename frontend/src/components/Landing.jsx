@@ -61,7 +61,7 @@ export default function Landing({ authUser = null }) {
             border: "2px solid #00eaff",
             borderRadius: 12,
             padding: 16,
-            maxWidth: 560,
+            maxWidth: 920,
             fontSize: 16
           }}
         >
@@ -79,7 +79,7 @@ export default function Landing({ authUser = null }) {
           border: "1px solid #00eaff",
           borderRadius: 12,
           padding: 20,
-          maxWidth: 560
+          maxWidth: 920
         }}
       >
         <div style={{ fontSize: 22, fontWeight: "bold" }}>🕊️ RIP Booju</div>

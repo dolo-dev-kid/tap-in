@@ -4,24 +4,343 @@
   box-sizing: border-box;
 }
 
-body {
+html, body {
+  /* Twitch-style: near-black background, bright white text, 16px
+     base so nothing is tiny. The old shell was 11–14px grey text
+     (#80848e / #aaa) on grey (#313338) — that's why Wesley couldn't
+     see anything. */
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* Discord-style shell palette: rail #1e1f22, sidebar #2b2d31,
-     main #313338 — with Tap In's existing cyan (#00eaff) accent. */
-  background: #313338;
-  color: #fff;
+  background: #0e0e10;
+  color: #efeff1;
 }
 
-/* Thin dark scrollbars for the Discord-style sidebars. */
-::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #1e1f22; border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: #2f2f35; border-radius: 5px; }
 
 #root {
   width: 100%;
   height: 100vh;
+}
+
+/* Headings and body copy inside the main area — big and bright. */
+h1 { font-size: 32px; line-height: 1.2; color: #fff; }
+h2 { font-size: 24px; line-height: 1.3; color: #fff; }
+h3 { font-size: 19px; color: #fff; }
+p, li { color: #efeff1; }
+a { color: #00eaff; }
+button { font-size: 16px; }
+input, textarea, select { font-size: 16px; color: #efeff1; }
+input::placeholder, textarea::placeholder { color: #adadb8; }
+
+/* ── Twitch shell ─────────────────────────────────────────── */
+.tapin-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  background: #0e0e10;
+  color: #efeff1;
+  overflow: hidden;
+}
+
+.tapin-topbar {
+  height: 56px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  background: #18181b;
+  border-bottom: 1px solid #2f2f35;
+  z-index: 40;
+}
+
+.tapin-hamburger {
+  display: none;
+  background: transparent;
+  border: none;
+  color: #efeff1;
+  font-size: 26px;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 8px;
+}
+
+.tapin-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  cursor: pointer;
+  padding: 6px 4px;
+  white-space: nowrap;
+}
+
+.tapin-logo-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: #00eaff;
+  color: #000;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.tapin-topnav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tapin-topnav-btn {
+  position: relative;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tapin-topsearch {
+  flex: 1;
+  display: flex;
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.tapin-topsearch input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 14px;
+  border: 1px solid #2f2f35;
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  background: #0e0e10;
+  outline: none;
+}
+
+.tapin-topsearch input:focus { border-color: #00eaff; }
+
+.tapin-topsearch button {
+  padding: 10px 16px;
+  border: 1px solid #2f2f35;
+  border-radius: 0 8px 8px 0;
+  background: #2f2f35;
+  color: #fff;
+  cursor: pointer;
+}
+
+.tapin-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.tapin-bell {
+  position: relative;
+  background: transparent;
+  border: none;
+  font-size: 22px;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+}
+
+.tapin-badge {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: #eb0400;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Badge inside a top-nav button sits inline, not absolute. */
+.tapin-topnav-btn .tapin-badge {
+  position: static;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.tapin-user-chip {
+  color: #00eaff;
+  font-weight: 800;
+  font-size: 16px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tapin-logout-btn, .tapin-login-btn, .tapin-signup-btn {
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: 1px solid #00eaff;
+  background: #18181b;
+  color: #00eaff;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.tapin-signup-btn { background: #00eaff; color: #000; }
+
+.tapin-panel-toggle {
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #00eaff;
+  background: #18181b;
+  color: #00eaff;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tapin-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  width: 100%;
+}
+
+/* Left nav — ONE column now (the Discord rail is gone). */
+.tapin-left {
+  width: 240px;
+  flex-shrink: 0;
+  background: #18181b;
+  border-right: 1px solid #2f2f35;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.tapin-left.closed { display: none; }
+
+.tapin-left-scrim { display: none; }
+
+/* Main — takes the whole rest of the page. */
+.tapin-main {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: #0e0e10;
+  padding: 20px 28px 40px;
+}
+
+.tapin-page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #2f2f35;
+}
+
+/* Right live/chat column — a REAL column, never an overlay on
+   desktop, so it can't cover the page. */
+.tapin-right {
+  width: 340px;
+  flex-shrink: 0;
+  background: #18181b;
+  border-left: 1px solid #2f2f35;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.tapin-right-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid #2f2f35;
+  font-size: 15px;
+  font-weight: 800;
+  color: #00eaff;
+  letter-spacing: 1px;
+  flex-shrink: 0;
+}
+
+.tapin-right-close {
+  background: transparent;
+  border: none;
+  color: #efeff1;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+/* ── Phones and narrow windows: the page is what you see ──── */
+@media (max-width: 900px) {
+  .tapin-hamburger { display: block; }
+  .tapin-topsearch { display: none; }
+  .tapin-topnav { display: none; }
+  .tapin-user-chip { max-width: 90px; }
+  .tapin-login-btn, .tapin-signup-btn { padding: 8px 10px; }
+
+  /* Left nav becomes a drawer over the page, only when open. */
+  .tapin-left {
+    position: fixed;
+    top: 56px;
+    left: 0;
+    bottom: 0;
+    z-index: 50;
+    box-shadow: 8px 0 24px rgba(0, 0, 0, 0.6);
+  }
+  .tapin-left.closed { display: none; }
+  .tapin-left.open { display: block; }
+  .tapin-left-scrim {
+    display: block;
+    position: fixed;
+    inset: 56px 0 0 0;
+    z-index: 45;
+    background: rgba(0, 0, 0, 0.5);
+    border: none;
+    cursor: pointer;
+  }
+
+  /* Right panel becomes a drawer from the right, only when open. */
+  .tapin-right {
+    position: fixed;
+    top: 56px;
+    right: 0;
+    bottom: 0;
+    z-index: 50;
+    width: min(340px, 92vw);
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.6);
+  }
+
+  .tapin-main { padding: 16px 16px 32px; }
+  h1 { font-size: 26px; }
 }

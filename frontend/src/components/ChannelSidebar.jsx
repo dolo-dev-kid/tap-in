@@ -61,10 +61,10 @@ export default function ChannelSidebar({ page, onNavigate, servers = [], selecte
           display: "flex", width: "100%", alignItems: "center", gap: 8,
           padding: "7px 10px", borderRadius: 6, border: "none", cursor: "pointer",
           background: active ? "#313338" : "transparent",
-          color: active ? "#fff" : "#b5bac1", fontWeight: active ? "bold" : "normal", fontSize: 14, textAlign: "left"
+          color: active ? "#fff" : "#efeff1", fontWeight: active ? "bold" : "normal", fontSize: 16, textAlign: "left"
         }}
       >
-        <span style={{ color: active ? "#00eaff" : "#80848e" }}>{c.icon}</span>
+        <span style={{ color: active ? "#00eaff" : "#adadb8" }}>{c.icon}</span>
         {c.label}
         {badge > 0 && (
           <span style={{ marginLeft: "auto", minWidth: 18, height: 18, borderRadius: 9, background: "#ff3b30", color: "white", fontSize: 11, fontWeight: "bold", display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px" }}>
@@ -75,47 +75,47 @@ export default function ChannelSidebar({ page, onNavigate, servers = [], selecte
     );
   };
   return (
-    <div style={{ width: 240, flexShrink: 0, background: "#2b2d31", display: "flex", flexDirection: "column", color: "white" }}>
-      <div style={{ padding: "14px 16px", borderBottom: "1px solid #1e1f22", fontWeight: "bold", fontSize: 15 }}>
+    <div style={{ width: "100%", height: "100%", background: "#18181b", display: "flex", flexDirection: "column", color: "#efeff1" }}>
+      <div style={{ padding: "14px 16px", borderBottom: "1px solid #1e1f22", fontWeight: "bold", fontSize: 18 }}>
         {selectedServer || "Tap In"}
-        <div style={{ fontSize: 11, color: "#80848e", fontWeight: "normal", marginTop: 2 }}>Dolo45's community</div>
+        <div style={{ fontSize: 12, color: "#adadb8", fontWeight: "normal", marginTop: 2 }}>Dolo45's community</div>
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: 10 }}>
         {username && (
           <>
-            <div style={{ fontSize: 11, color: "#80848e", letterSpacing: 1, padding: "6px 8px" }}>FIND</div>
-            <button onClick={findChat} style={{ display: "flex", width: "100%", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 6, border: "none", cursor: "pointer", background: "transparent", color: "#b5bac1", fontSize: 14, textAlign: "left" }}>
+            <div style={{ fontSize: 12, color: "#adadb8", letterSpacing: 1, padding: "6px 8px" }}>FIND</div>
+            <button onClick={findChat} style={{ display: "flex", width: "100%", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 6, border: "none", cursor: "pointer", background: "transparent", color: "#efeff1", fontSize: 16, textAlign: "left" }}>
               <span>🔍</span>Find a chat
             </button>
-            <button onClick={findUser} style={{ display: "flex", width: "100%", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 6, border: "none", cursor: "pointer", background: "transparent", color: "#b5bac1", fontSize: 14, textAlign: "left" }}>
+            <button onClick={findUser} style={{ display: "flex", width: "100%", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 6, border: "none", cursor: "pointer", background: "transparent", color: "#efeff1", fontSize: 16, textAlign: "left" }}>
               <span>🔍</span>Find a user
             </button>
           </>
         )}
-        <div style={{ fontSize: 11, color: "#80848e", letterSpacing: 1, padding: "6px 8px" }}>TEXT CHANNELS</div>
+        <div style={{ fontSize: 12, color: "#adadb8", letterSpacing: 1, padding: "6px 8px" }}>TEXT CHANNELS</div>
         {TEXT_CHANNELS.map(channelBtn)}
-        <div style={{ fontSize: 11, color: "#80848e", letterSpacing: 1, padding: "14px 8px 6px" }}>VOICE CHANNELS</div>
+        <div style={{ fontSize: 12, color: "#adadb8", letterSpacing: 1, padding: "14px 8px 6px" }}>VOICE CHANNELS</div>
         {VOICE_CHANNELS.map(channelBtn)}
-        <div style={{ fontSize: 11, color: "#80848e", letterSpacing: 1, padding: "14px 8px 6px" }}>SERVERS — YOURS</div>
+        <div style={{ fontSize: 12, color: "#adadb8", letterSpacing: 1, padding: "14px 8px 6px" }}>SERVERS — YOURS</div>
         {servers.length === 0 ? (
-          <p style={{ color: "#80848e", fontSize: 13, padding: "0 8px" }}>No servers yet — make one on the Servers page.</p>
+          <p style={{ color: "#d3d3d8", fontSize: 15, padding: "0 8px" }}>No servers yet — make one on the Servers page.</p>
         ) : (
           servers.map((s, i) => (
             <button
               key={`${s}-${i}`}
               onClick={() => { onSelectServer && onSelectServer(s); onNavigate("servers"); }}
-              style={{ display: "block", width: "100%", textAlign: "left", padding: "7px 10px", borderRadius: 6, border: "none", cursor: "pointer", background: selectedServer === s ? "#313338" : "transparent", color: "#b5bac1", fontSize: 14 }}
+              style={{ display: "block", width: "100%", textAlign: "left", padding: "7px 10px", borderRadius: 6, border: "none", cursor: "pointer", background: selectedServer === s ? "#313338" : "transparent", color: "#efeff1", fontSize: 16 }}
             >
               🛡️ {s}
             </button>
           ))
         )}
-        <div style={{ fontSize: 11, color: "#80848e", letterSpacing: 1, padding: "14px 8px 6px" }}>MORE</div>
+        <div style={{ fontSize: 12, color: "#adadb8", letterSpacing: 1, padding: "14px 8px 6px" }}>MORE</div>
         {MORE.map(channelBtn)}
         {isAdmin && (
           <button
             onClick={() => onNavigate("admin")}
-            style={{ display: "flex", width: "100%", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 6, border: "none", cursor: "pointer", background: page === "admin" ? "#313338" : "transparent", color: page === "admin" ? "#fff" : "#b5bac1", fontSize: 14, textAlign: "left" }}
+            style={{ display: "flex", width: "100%", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 6, border: "none", cursor: "pointer", background: page === "admin" ? "#313338" : "transparent", color: page === "admin" ? "#fff" : "#efeff1", fontSize: 16, textAlign: "left" }}
           >
             <span>🛡️</span>Admin
           </button>
