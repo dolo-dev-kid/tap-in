@@ -10,9 +10,16 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: #0f0f0f;
+  /* Discord-style shell palette: rail #1e1f22, sidebar #2b2d31,
+     main #313338 — with Tap In's existing cyan (#00eaff) accent. */
+  background: #313338;
   color: #fff;
 }
+
+/* Thin dark scrollbars for the Discord-style sidebars. */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #1e1f22; border-radius: 4px; }
 
 #root {
   width: 100%;

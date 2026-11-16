@@ -3,6 +3,8 @@ import axiosInstance from "../api/axios";
 import { uploadFile, mediaUrl } from "../api/upload";
 import MyMerch from "./MyMerch";
 import ReferralBox from "./ReferralBox";
+import ShareTapIn from "./ShareTapIn";
+import SocialLinksRow, { SOCIAL_PLATFORMS } from "./SocialLinks";
 import { DOLO45_IG } from "../data/dolo45Photos";
 
 // Dolo45's profile pic is his real Instagram profile pic
@@ -138,6 +140,12 @@ export default function Profile() {
   const [songUploading, setSongUploading] = useState(false);
   const [note, setNote] = useState("");
   const [loading, setLoading] = useState(Boolean(userId));
+  // My other platforms — the member's own links, pasted by them.
+  // Empty by default, never auto-filled.
+  const emptyLinks = () => ({ instagram: "", facebook: "", tiktok: "", youtube: "", soundcloud: "", bandlab: "" });
+  const [socialLinks, setSocialLinks] = useState(emptyLinks());
+  const [socialInput, setSocialInput] = useState(emptyLinks());
+  const [referralCode, setReferralCode] = useState("");
 
   // Load the real profile from the server when logged in.
   useEffect(() => {
@@ -156,6 +164,9 @@ export default function Profile() {
         setAvatarInput(res.data?.avatar || "");
         setProfileSong(res.data?.profileSong || null);
         setSongChoice(res.data?.profileSong?.uploadId ? String(res.data.profileSong.uploadId) : "none");
+        const links = { ...emptyLinks(), ...(res.data?.socialLinks || {}) };
+        setSocialLinks(links);
+        setSocialInput(links);
       })
       .catch(() => {
         // Keep the local fallback (username from login) and say so below.
@@ -166,6 +177,11 @@ export default function Profile() {
     axiosInstance
       .get("/uploads/mine", { headers: authHeaders() })
       .then((res) => setMyAudio((res.data?.uploads || []).filter((u) => u.kind === "audio")))
+      .catch(() => {});
+    // Referral code, for the Share Tap In everywhere box.
+    axiosInstance
+      .get("/referral/me", { headers: authHeaders() })
+      .then((res) => setReferralCode(res.data?.code || ""))
       .catch(() => {});
   }, [userId]);
 
@@ -215,6 +231,24 @@ export default function Profile() {
       setSongUploading(false);
     } else if (songChanged) {
       songPatch = { profileSongUploadId: songChoice === "none" ? null : songChoice };
+    }
+    // My other platforms: save the member's own links to their
+    // account (URL or handle only — the backend rejects anything
+    // else). Logged-in only; a failed save is reported, not hidden.
+    if (userId) {
+      try {
+        const socialRes = await axiosInstance.post(
+          "/profile/social-links",
+          { socialLinks: socialInput },
+          { headers: authHeaders() }
+        );
+        const links = { ...emptyLinks(), ...(socialRes.data?.socialLinks || {}) };
+        setSocialLinks(links);
+        setSocialInput(links);
+      } catch (err) {
+        setNote(err.response?.data?.error || "Could not save your other-platform links — please try again.");
+        return;
+      }
     }
     try {
       const res = await axiosInstance.patch(
@@ -294,6 +328,15 @@ export default function Profile() {
             : "Not logged in — log in to save your profile to your account."}
         </p>
         <ProfileSongPlayer song={profileSong} />
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 13, color: "#aaa" }}>🌐 My other platforms</div>
+          <SocialLinksRow links={socialLinks} />
+          {!editing && !Object.values(socialLinks).some(Boolean) && (
+            <p style={{ marginTop: 4, color: "#777", fontSize: 13 }}>
+              No other platforms linked yet — tap Edit Profile to add them.
+            </p>
+          )}
+        </div>
         {note && (
           <p style={{ marginTop: 10, color: "#ffce54", fontSize: 14 }}>{note}</p>
         )}
@@ -361,6 +404,18 @@ export default function Profile() {
                 New song: {songFile.name} — will be uploaded and set as your profile song.
               </p>
             )}
+            <label style={{ display: "block", color: "#aaa", fontSize: 13, marginBottom: 6 }}>
+              🌐 My other platforms — paste your own links or handles (Instagram, Facebook, TikTok, YouTube, SoundCloud, BandLab). Nothing is auto-filled.
+            </label>
+            {SOCIAL_PLATFORMS.map((p) => (
+              <input
+                key={p.key}
+                value={socialInput[p.key] || ""}
+                onChange={(e) => setSocialInput((prev) => ({ ...prev, [p.key]: e.target.value }))}
+                placeholder={`${p.label} — ${p.placeholder}`}
+                style={input}
+              />
+            ))}
             <button onClick={save} disabled={uploading || songUploading} style={{ ...btn, opacity: uploading || songUploading ? 0.6 : 1 }}>
               {uploading || songUploading ? "Uploading…" : "Save"}
             </button>{" "}
@@ -379,6 +434,8 @@ export default function Profile() {
       </div>
 
       {userId && <ReferralBox />}
+
+      {userId && <ShareTapIn code={referralCode} />}
 
       {isDolo45 && <MyMerch />}
     </div>

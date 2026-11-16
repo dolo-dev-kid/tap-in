@@ -89,6 +89,19 @@ const UserSchema = new mongoose.Schema({
     type: [String],
     default: []
   },
+  // Social links — the member's own other platforms, pasted by the
+  // member themself. Plain URL or handle strings only, never
+  // auto-filled, never imported from anywhere. Shown to other
+  // logged-in members only (publicUser / members), never to the
+  // public web. No emails, no phones, no passwords here.
+  socialLinks: {
+    instagram: { type: String, default: "" },
+    facebook: { type: String, default: "" },
+    tiktok: { type: String, default: "" },
+    youtube: { type: String, default: "" },
+    soundcloud: { type: String, default: "" },
+    bandlab: { type: String, default: "" }
+  },
   createdAt: {
     type: Date,
     default: Date.now

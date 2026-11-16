@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import axiosInstance from "../api/axios";
 import ReferralBox from "./ReferralBox";
+import ShareTapIn from "./ShareTapIn";
+import SocialLinksRow from "./SocialLinks";
 
 // Friends are the logged-in user's real friends from the database.
 // Friend requests are real pending requests from the database too:
@@ -22,6 +24,7 @@ export default function Friends({ onNavigate }) {
   const [members, setMembers] = useState([]);
   const [memberSearch, setMemberSearch] = useState("");
   const [membersLoading, setMembersLoading] = useState(false);
+  const [referralCode, setReferralCode] = useState("");
 
   const userId =
     typeof localStorage !== "undefined"
@@ -84,6 +87,10 @@ export default function Friends({ onNavigate }) {
       })
       .finally(() => setLoading(false));
     loadRequests();
+    axiosInstance
+      .get("/referral/me", { headers: authHeaders() })
+      .then((res) => setReferralCode(res.data?.code || ""))
+      .catch(() => {});
     // Keep requests fresh while this tab is open, so a new request
     // shows up without leaving and coming back.
     const timer = setInterval(loadRequests, 30000);
@@ -177,6 +184,7 @@ export default function Friends({ onNavigate }) {
       <h1>Your Friends</h1>
 
       <ReferralBox compact />
+      <ShareTapIn code={referralCode} />
 
       {/* Friend Requests — always visible at the top, with a count,
           so a request can never sit hidden the way it used to. */}
@@ -332,6 +340,7 @@ export default function Friends({ onNavigate }) {
                     {m.bio}
                   </span>
                 )}
+                <SocialLinksRow links={m.socialLinks} />
                 {!m.online && m.lastSeenAt && (
                   <span style={{ color: "#777", fontSize: 12, display: "block", marginTop: 2 }}>
                     last seen {new Date(m.lastSeenAt).toLocaleDateString()}

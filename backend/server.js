@@ -132,6 +132,35 @@ function dolo45Avatar(u) {
   return u.avatar || "";
 }
 
+// Social links — the six platforms Tap In links out to. A value is
+// either empty, a plain handle (@name or name, letters/digits/./_/-),
+// or a full http(s) URL. Anything else (javascript:, data:, spaces,
+// over 200 chars) is rejected, never stored. Only the six keys are
+// ever kept — anything else in the body is dropped.
+const SOCIAL_PLATFORMS = ["instagram", "facebook", "tiktok", "youtube", "soundcloud", "bandlab"];
+function cleanSocialLinks(input) {
+  const out = {};
+  for (const key of SOCIAL_PLATFORMS) out[key] = "";
+  if (!input || typeof input !== "object") return out;
+  for (const key of SOCIAL_PLATFORMS) {
+    const raw = input[key];
+    if (raw === undefined || raw === null) continue;
+    if (typeof raw !== "string") throw new Error(`${key} link must be text`);
+    const v = raw.trim().slice(0, 200);
+    if (!v) continue;
+    if (/^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(v)) { out[key] = v; continue; }
+    if (/^@?[A-Za-z0-9._-]{1,64}$/.test(v)) { out[key] = v; continue; }
+    throw new Error(`${key} must be a link (https://…) or a handle (@name)`);
+  }
+  return out;
+}
+function publicSocialLinks(u) {
+  const links = u.socialLinks || {};
+  const out = {};
+  for (const key of SOCIAL_PLATFORMS) out[key] = typeof links[key] === "string" ? links[key] : "";
+  return out;
+}
+
 // Public-safe shape for a user in admin listings: never include the
 // password field (hash included — it is never selected here).
 function publicUser(u) {
@@ -145,6 +174,7 @@ function publicUser(u) {
     createdAt: u.createdAt,
     friendCount: (u.friends || []).length,
     serverCount: (u.servers || []).length,
+    socialLinks: publicSocialLinks(u),
     // Online presence (admin list only): live "online now" from the
     // socket counts, plus last seen from MongoDB.
     online: typeof onlineUserIds !== "undefined" ? onlineUserIds.has(String(u._id)) : false,
@@ -535,7 +565,7 @@ app.get("/users/:id", requireDb, async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ error: "User not found" });
-    res.json({ id: user._id, username: user.username, bio: user.bio, avatar: dolo45Avatar(user), profileSong: user.profileSong && user.profileSong.url ? user.profileSong : null, friends: user.friends, servers: user.servers });
+    res.json({ id: user._id, username: user.username, bio: user.bio, avatar: dolo45Avatar(user), profileSong: user.profileSong && user.profileSong.url ? user.profileSong : null, friends: user.friends, servers: user.servers, socialLinks: publicSocialLinks(user) });
   } catch (err) {
     res.status(500).json({
       error: err.message
@@ -586,11 +616,31 @@ app.patch("/users/:id", requireDb, requireAuth, async (req, res) => {
       }
     }
     await target.save();
-    res.json({ id: target._id, username: target.username, bio: target.bio, avatar: target.avatar, profileSong: target.profileSong && target.profileSong.url ? target.profileSong : null, friends: target.friends, servers: target.servers });
+    res.json({ id: target._id, username: target.username, bio: target.bio, avatar: target.avatar, profileSong: target.profileSong && target.profileSong.url ? target.profileSong : null, friends: target.friends, servers: target.servers, socialLinks: publicSocialLinks(target) });
   } catch (err) {
     res.status(500).json({
       error: err.message
     });
+  }
+});
+
+// POST /profile/social-links — save YOUR OWN other-platform links.
+// Logged-in only, your account only (req.user). Validated by
+// cleanSocialLinks: URL or handle only, never auto-filled, never
+// imported. No OAuth, no follower import, no auto-posting.
+app.post("/profile/social-links", requireDb, requireAuth, async (req, res) => {
+  try {
+    let links;
+    try {
+      links = cleanSocialLinks(req.body?.socialLinks || req.body || {});
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+    req.user.socialLinks = links;
+    await req.user.save();
+    res.json({ success: true, socialLinks: publicSocialLinks(req.user) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -937,7 +987,7 @@ app.get("/members", requireDb, requireAuth, async (req, res) => {
       filter.username = { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
     }
     const users = await User.find(filter)
-      .select("_id username bio avatar role lastSeenAt friendRequests")
+      .select("_id username bio avatar role lastSeenAt friendRequests socialLinks")
       .sort({ username: 1 })
       .limit(100);
     const myFriends = req.user.friends || [];
@@ -950,6 +1000,7 @@ app.get("/members", requireDb, requireAuth, async (req, res) => {
         bio: (u.bio || "").slice(0, 120),
         avatar: dolo45Avatar(u),
         role: u.role,
+        socialLinks: publicSocialLinks(u),
         online: onlineUserIds.has(String(u._id)),
         lastSeenAt: u.lastSeenAt || null,
         isFriend: myFriends.some((f) => sameUsername(f, u.username)),
@@ -970,8 +1021,8 @@ app.get("/users", requireDb, requireAuth, async (req, res) => {
     const filter = q
       ? { username: { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" } }
       : {};
-    const users = await User.find(filter).select("_id username role").sort({ username: 1 }).limit(20);
-    res.json({ success: true, users: users.map((u) => ({ id: u._id, username: u.username, role: u.role })) });
+    const users = await User.find(filter).select("_id username role socialLinks").sort({ username: 1 }).limit(20);
+    res.json({ success: true, users: users.map((u) => ({ id: u._id, username: u.username, role: u.role, socialLinks: publicSocialLinks(u) })) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
