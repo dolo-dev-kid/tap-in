@@ -105,6 +105,11 @@ export default function Notifications({ onNavigate, onCountChange }) {
     if (n.type === "live" && n.refId) {
       if (onNavigate) onNavigate("video", n.refId);
     } else if (n.type === "message" && n.refId && n.refId !== "global") {
+      // A private-message alert must open THAT chat: store its room
+      // id for the Chat tab, which opens it and switches to Private
+      // chats. Before this fix the tap only landed on the Chat page
+      // (Global tab, no room open), so the messages never opened.
+      try { localStorage.setItem("tapin_open_room", n.refId); } catch (e) { /* storage unavailable */ }
       if (onNavigate) onNavigate("chat");
     } else if (n.type === "message" && n.refId === "global") {
       if (onNavigate) onNavigate("chat");

@@ -96,6 +96,12 @@ export default function ChatPanel() {
   };
 
   const openRoom = async (room) => {
+    // The room view only renders on the Private/Groups tabs — so
+    // opening a room has to switch the tab too. Before this fix a
+    // room opened from a friend's Message button (or any outside
+    // entry point) loaded its messages but stayed hidden behind the
+    // Global tab, so it looked like the messages would not open.
+    setTab(room.type === "group" ? "groups" : "private");
     setActiveRoom(room);
     setPrivMessages([]);
     setPrivError("");
@@ -106,6 +112,29 @@ export default function ChatPanel() {
       setPrivMessages(res.data.messages || []);
       if (privSocketRef.current) {
         privSocketRef.current.emit("join-chat-room", room.id);
+      }
+    } catch (err) {
+      setPrivError(err.response?.data?.error || "Could not open that chat.");
+    }
+  };
+
+  // Open one room straight from its id — used when the user taps a
+  // message alert, which only carries the room id. Fetches the room
+  // + its messages directly (members only, backend-checked), so it
+  // does not depend on the room list having loaded into state yet.
+  const openRoomById = async (roomId) => {
+    setPrivError("");
+    try {
+      const res = await axiosInstance.get(`/chat/rooms/${roomId}/messages`, {
+        headers: authHeaders()
+      });
+      const room = res.data?.room;
+      if (!room) { setPrivError("Could not open that chat."); return; }
+      setTab(room.type === "group" ? "groups" : "private");
+      setActiveRoom({ ...room, id: room.id || roomId });
+      setPrivMessages(res.data.messages || []);
+      if (privSocketRef.current) {
+        privSocketRef.current.emit("join-chat-room", room.id || roomId);
       }
     } catch (err) {
       setPrivError(err.response?.data?.error || "Could not open that chat.");
@@ -187,16 +216,27 @@ export default function ChatPanel() {
     privSocket.on("chat-error", (data) => {
       if (data?.error) setPrivError(data.error);
     });
-    loadRooms();
     loadPresence();
-    // DM requested from the Friends tab: Friends stores the friend's
-    // name in localStorage ("tapin_dm_username") and navigates here.
-    // Open that chat once, then clear it so it never re-fires.
-    const pendingDm = localStorage.getItem("tapin_dm_username");
-    if (pendingDm) {
-      localStorage.removeItem("tapin_dm_username");
-      createDm(pendingDm);
-    }
+    // Open what the user tapped elsewhere, AFTER the room list
+    // loads: a message alert stores its room id in localStorage
+    // ("tapin_open_room"), a friend's Message button stores the
+    // friend's name ("tapin_dm_username"). Each is used once, then
+    // cleared so it never re-fires. openRoom switches the tab to
+    // Private chats — the room view only renders there.
+    (async () => {
+      await loadRooms();
+      const pendingRoom = localStorage.getItem("tapin_open_room");
+      if (pendingRoom) {
+        localStorage.removeItem("tapin_open_room");
+        await openRoomById(pendingRoom);
+        return;
+      }
+      const pendingDm = localStorage.getItem("tapin_dm_username");
+      if (pendingDm) {
+        localStorage.removeItem("tapin_dm_username");
+        await createDm(pendingDm);
+      }
+    })();
     return () => {
       privSocket.disconnect();
       privSocketRef.current = null;

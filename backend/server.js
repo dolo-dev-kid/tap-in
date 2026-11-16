@@ -226,8 +226,28 @@ function publicSocialLinks(u) {
   const links = u.socialLinks || {};
   const out = {};
   for (const key of SOCIAL_PLATFORMS) out[key] = typeof links[key] === "string" ? links[key] : "";
+  // Dolo45's own platforms, seeded (16 Nov 2026, Wesley: "sync all
+  // my social media platforms") — his real accounts only, shown ONLY
+  // for the exact username "Dolo45" (case-sensitive — the separate
+  // banned lowercase "dolo45" never gets them), and ONLY when the
+  // account has no saved links of its own. A saved link always wins:
+  // as soon as any link is saved, the saved set is shown as-is.
+  // Links only — no OAuth, no follower import, no auto-posting.
+  if (u && u.username === "Dolo45" && !SOCIAL_PLATFORMS.some((k) => out[k])) {
+    return { ...DOLO45_SOCIAL_LINKS };
+  }
   return out;
 }
+
+// Dolo45's real accounts (Wesley, 16 Nov 2026). Nothing invented.
+const DOLO45_SOCIAL_LINKS = {
+  instagram: "https://instagram.com/nho_life_dolo45",
+  facebook: "https://www.facebook.com/1Dolo45",
+  tiktok: "@dolo45_music",
+  youtube: "https://www.youtube.com/@Dolo45-ent",
+  soundcloud: "https://soundcloud.com/dolo45",
+  bandlab: "pgh_dolo45"
+};
 
 // --- Email (verification + admin 2FA + password reset) --------------
 // Tap In had NO email on accounts and NO mail service before this.
