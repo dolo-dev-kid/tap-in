@@ -1,8 +1,12 @@
 // Keyword safety scan for private chats — no external service, no
 // paid API, no new keys. It runs on every private message the backend
-// saves. A match only FLAGS the message for the owner (admin) to
-// review in the Admin panel: it never blocks the message, never
-// auto-bans anyone, and never shows private messages to non-admins.
+// saves. A match only FLAGS the message for the OWNER (exact Dolo45)
+// to review in the Admin panel, and alerts only him: it never blocks
+// the message, never filters it, never auto-bans anyone, and never
+// shows private messages to other admins or non-admins. The message
+// is always saved and delivered FIRST — the scan runs after, so a
+// flag can never stop someone talking. Wesley screens private chats
+// himself; the monitor is alert-only.
 //
 // Categories are the ones Wesley named: grooming / sexual content
 // involving minors, threats of violence, drug dealing, and planning

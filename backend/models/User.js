@@ -102,6 +102,83 @@ const UserSchema = new mongoose.Schema({
     soundcloud: { type: String, default: "" },
     bandlab: { type: String, default: "" }
   },
+  // Email — the member's own email, used ONLY for email verification
+  // and admin two-factor codes. Never shown to other members: it is
+  // never in publicUser / members / feed responses. Optional at
+  // signup; a member adds it on Profile when they want the verified
+  // checkmark. Lowercased, unique when set (sparse, so accounts
+  // without an email are untouched).
+  email: {
+    type: String,
+    default: "",
+    lowercase: true,
+    trim: true,
+    sparse: true
+  },
+  // Email verification — via a 6-digit code sent to the email above.
+  // verified = the checkmark shown next to the username. No ID
+  // documents are ever collected. The owner (exact username Dolo45)
+  // is verified by seed; every other member earns it by confirming
+  // they own the email on their account. Admins can revoke the
+  // badge (verified=false) but cannot grant it without email proof.
+  emailVerified: { type: Boolean, default: false },
+  verified: { type: Boolean, default: false },
+  verificationStatus: {
+    type: String,
+    enum: ["none", "pending", "approved", "revoked"],
+    default: "none"
+  },
+  // One-time codes are stored HASHED (sha256), never in plain text,
+  // with a 15-minute expiry and a 5-attempt limit. A code is only
+  // stored after an email was actually sent — when no email service
+  // is configured, no code is issued and nothing can be confirmed.
+  emailCodeHash: { type: String, default: "" },
+  emailCodeExpiresAt: { type: Date, default: null },
+  emailCodeAttempts: { type: Number, default: 0 },
+  emailCodeSentAt: { type: Date, default: null },
+  // Admin two-factor — a separate 6-digit code, same hashing/expiry
+  // rules, sent to the admin's verified email at login.
+  twoFactorCodeHash: { type: String, default: "" },
+  twoFactorCodeExpiresAt: { type: Date, default: null },
+  twoFactorCodeAttempts: { type: Number, default: 0 },
+  twoFactorCodeSentAt: { type: Date, default: null },
+  // Password reset — 6-digit code, hashed, 15-minute expiry,
+  // one-time use. A code is only stored after an email was actually
+  // sent; when no email service is configured, no code is issued.
+  passwordResetCodeHash: { type: String, default: "" },
+  passwordResetExpiresAt: { type: Date, default: null },
+  passwordResetAttempts: { type: Number, default: 0 },
+  passwordResetSentAt: { type: Date, default: null },
+  // Owner approval gate (Wesley, Nov 16): a reset code is NEVER
+  // emailed until Dolo45 approves the request in the Admin panel.
+  // decidedBy is the admin username who approved/denied it.
+  passwordResetRequest: {
+    status: { type: String, enum: ["none", "pending", "approved", "denied"], default: "none" },
+    requestedAt: { type: Date, default: null },
+    decidedAt: { type: Date, default: null },
+    decidedBy: { type: String, default: "" }
+  },
+  // JWT token version — bumped on a successful password reset so
+  // every token issued before the reset stops working. Tokens
+  // issued before this field existed carry no version and match 0.
+  tokenVersion: { type: Number, default: 0 },
+  // Stream destinations (multistream out) — the streamer's OWN
+  // RTMP ingest URLs + stream keys for other platforms (YouTube,
+  // Facebook, Twitch, TikTok, Instagram). The key is stored
+  // ENCRYPTED (AES-256-GCM, see server.js) and is NEVER returned by
+  // any API, never logged, never in git. Only the account owner can
+  // read their own destinations (masked). Tap In itself does NOT
+  // restream — its video rooms are WebRTC peer-to-peer; to actually
+  // broadcast out, the streamer runs OBS multistream / Restream with
+  // these destinations (see STREAMING.md).
+  streamDestinations: [{
+    platform: { type: String, default: "" },
+    rtmpUrl: { type: String, default: "" },
+    keyEnc: { type: String, default: "" },
+    keyLast4: { type: String, default: "" },
+    enabled: { type: Boolean, default: false },
+    updatedAt: { type: Date, default: Date.now }
+  }],
   createdAt: {
     type: Date,
     default: Date.now

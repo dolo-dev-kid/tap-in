@@ -1,20 +1,25 @@
 const mongoose = require("mongoose");
 
-// A safety flag on one chat message, for the owner (admin) to review.
-// Flags are created by the keyword scan in chatFlags.js — they never
-// auto-ban anyone and never block a message. Only an admin can list
-// flags or mark one reviewed. Flags live in MongoDB with everything
-// else, so they survive a Render restart.
+// A safety flag on one chat message, for the owner (exact Dolo45)
+// to review. Flags are created by the keyword scan in chatFlags.js
+// — they never auto-ban anyone, never block a message, never delete
+// one. Only the owner can list flags or mark one reviewed, and only
+// he is alerted. Flags live in MongoDB with everything else, so
+// they survive a Render restart. A global-chat flag has no room or
+// message document (global chat is broadcast, not stored), so both
+// are optional; its roomName is "Global chat".
 const ChatFlagSchema = new mongoose.Schema({
   message: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "ChatMessage",
-    required: true
+    required: false,
+    default: null
   },
   room: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "ChatRoom",
-    required: true
+    required: false,
+    default: null
   },
   roomName: {
     type: String,

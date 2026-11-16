@@ -6,6 +6,7 @@ const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
+const nodemailer = require("nodemailer");
 const multer = require("multer");
 const { GridFSBucket, ObjectId } = require("mongodb");
 const { Server } = require("socket.io");
@@ -23,12 +24,16 @@ const app = express();
 const server = http.createServer(app);
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
-app.use(cors({ origin: [FRONTEND_URL, "http://localhost:5173", "capacitor://localhost"], credentials: true }));
+// CORS: only Tap In's own origins, never a wildcard. The live frontend
+// is https://tap-in-cakt.onrender.com; local dev is :5173; the Play
+// app talks over capacitor://localhost.
+const ALLOWED_ORIGINS = [FRONTEND_URL, "http://localhost:5173", "capacitor://localhost", "https://tap-in-cakt.onrender.com"];
+app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
 app.use(express.json());
 
 const io = new Server(server, {
   cors: {
-    origin: [FRONTEND_URL, "http://localhost:5173", "capacitor://localhost"],
+    origin: ALLOWED_ORIGINS,
     methods: ["GET", "POST"],
     credentials: true
   }
@@ -57,10 +62,10 @@ if (!MONGODB_URI) {
   console.warn("⚠️  MONGODB_URI is not set — server will start, but auth/friends/servers need MongoDB. Copy backend/.env.example to backend/.env and set it.");
 } else {
   mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 5000 })
-    .then(() => { dbConnected = true; console.log("✅ MongoDB Connected"); })
+    .then(() => { dbConnected = true; console.log("✅ MongoDB Connected"); ensureVerifiedSeed(); })
     .catch((err) => console.error("❌ MongoDB Error:", err.message));
 }
-mongoose.connection.on("connected", () => { dbConnected = true; });
+mongoose.connection.on("connected", () => { dbConnected = true; ensureVerifiedSeed(); });
 mongoose.connection.on("disconnected", () => { dbConnected = false; });
 
 function requireDb(req, res, next) {
@@ -75,6 +80,10 @@ if (!JWT_SECRET) {
   console.warn("⚠️  JWT_SECRET is not set — set a long random secret in backend/.env. Using a dev-only fallback; do NOT use in production.");
 }
 const jwtSecret = JWT_SECRET || "dev-only-change-me";
+if (process.env.NODE_ENV === "production" && !JWT_SECRET) {
+  console.error("FATAL: JWT_SECRET is not set in production — refusing to start with a dev fallback.");
+  process.exit(1);
+}
 
 // --- Owner / admin role -------------------------------------------------
 // SAFETY: this is owner moderation for Wesley's own app (Tap In) —
@@ -102,10 +111,21 @@ async function requireAuth(req, res, next) {
   if (!token) return res.status(401).json({ error: "Login required" });
   try {
     const decoded = jwt.verify(token, jwtSecret);
+    // A 2FA temp token (purpose "2fa") is NOT a login — it can only
+    // finish the second factor, never call normal endpoints.
+    if (decoded.purpose && decoded.purpose !== "full") {
+      return res.status(401).json({ error: "Finish two-factor authentication first" });
+    }
     const user = await User.findById(decoded.id);
     if (!user) return res.status(401).json({ error: "User not found" });
     if (user.banned) return res.status(403).json({ error: "This account has been banned" });
+    // A password reset bumps tokenVersion, so every token issued
+    // before the reset stops working here (stale-token check).
+    if (typeof decoded.tokenVersion === "number" && decoded.tokenVersion !== (user.tokenVersion || 0)) {
+      return res.status(401).json({ error: "Your login was reset — please log in again" });
+    }
     req.user = user;
+    req.tokenTwoFactorVerified = decoded.twoFactorVerified === true;
     next();
   } catch (err) {
     return res.status(401).json({ error: "Invalid or expired login" });
@@ -113,9 +133,55 @@ async function requireAuth(req, res, next) {
 }
 
 // Admin only: must be logged in AND have role "admin".
+// Admin 2FA: once email sending is configured, an admin token must
+// also carry twoFactorVerified=true (earned by entering the code
+// emailed at login). Until email sending is configured, 2FA cannot
+// run — admins are NOT locked out, but the server logs a warning and
+// the frontend shows "2FA not active yet". This is deliberate: never
+// lock the owner out of a working login over a code that was never sent.
 function requireAdmin(req, res, next) {
   if (!req.user || req.user.role !== "admin") {
     return res.status(403).json({ error: "Admin access only" });
+  }
+  if (emailConfigured() && !req.tokenTwoFactorVerified) {
+    return res.status(403).json({ error: "Admin two-factor authentication required — log in again and enter the code sent to your email." });
+  }
+  next();
+}
+
+// authAny: accepts a full login token OR a 2FA temp token. Used
+// only by the verification / 2FA-setup endpoints, where a member
+// may be mid-login (temp token) or fully logged in. Temp tokens can
+// never call normal endpoints (requireAuth rejects them).
+async function authAny(req, res, next) {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+  if (!token) return res.status(401).json({ error: "Login required" });
+  try {
+    const decoded = jwt.verify(token, jwtSecret);
+    const user = await User.findById(decoded.id);
+    if (!user) return res.status(401).json({ error: "User not found" });
+    if (user.banned) return res.status(403).json({ error: "This account has been banned" });
+    if (decoded.purpose === "full" && typeof decoded.tokenVersion === "number" && decoded.tokenVersion !== (user.tokenVersion || 0)) {
+      return res.status(401).json({ error: "Your login was reset — please log in again" });
+    }
+    req.user = user;
+    req.tokenPurpose = decoded.purpose || "full";
+    req.tokenTwoFactorVerified = decoded.twoFactorVerified === true;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: "Invalid or expired login" });
+  }
+}
+
+// requireOwner: ONLY the owner (exact username Dolo45, ADMIN_USERNAME)
+// — not other admins. Private-chat review is owner-only: Wesley
+// screens private chats himself. Other admins (AnneStar83,
+// Alantanto, etc.) can moderate users/uploads, but they can NEVER
+// read someone else's private chats or safety flags.
+function requireOwner(req, res, next) {
+  if (!req.user || !isOwnerUsername(req.user.username)) {
+    return res.status(403).json({ error: "Only Dolo45 (the owner) can review private chats" });
   }
   next();
 }
@@ -161,6 +227,145 @@ function publicSocialLinks(u) {
   return out;
 }
 
+// --- Email (verification + admin 2FA + password reset) --------------
+// Tap In had NO email on accounts and NO mail service before this.
+// Sending uses SMTP from env only: SMTP_HOST, SMTP_PORT, SMTP_USER,
+// SMTP_PASS, SMTP_FROM (e.g. a Gmail app password, or any SMTP
+// provider). If any of those are missing, emailConfigured() is false
+// and NOTHING is sent — endpoints say so plainly and no code is
+// issued, so a code can never be "confirmed" that was never emailed.
+// Do NOT fake a sent email. To turn email on live, set those five
+// vars on the Render backend service and redeploy; no code change.
+function emailConfigured() {
+  return Boolean(process.env.SMTP_HOST && process.env.SMTP_PORT && process.env.SMTP_USER && process.env.SMTP_PASS);
+}
+let mailTransporter = null;
+function getTransporter() {
+  if (!emailConfigured()) return null;
+  if (!mailTransporter) {
+    mailTransporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT),
+      secure: Number(process.env.SMTP_PORT) === 465,
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+    });
+  }
+  return mailTransporter;
+}
+async function sendEmail(to, subject, text) {
+  const t = getTransporter();
+  if (!t) return { sent: false, reason: "email_not_configured" };
+  try {
+    await t.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to, subject, text });
+    return { sent: true };
+  } catch (err) {
+    console.error("Email send failed:", err.message);
+    return { sent: false, reason: "email_send_failed" };
+  }
+}
+function makeSixDigitCode() {
+  return String(crypto.randomInt(100000, 1000000));
+}
+function hashCode(code) {
+  return crypto.createHash("sha256").update(String(code)).digest("hex");
+}
+function codeMatches(code, hash) {
+  if (!code || !hash) return false;
+  const a = Buffer.from(hashCode(code));
+  const b = Buffer.from(String(hash));
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+const CODE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+const CODE_MAX_ATTEMPTS = 5;
+// --- Stream key encryption (multistream destinations) ----------------
+// AES-256-GCM, key from STREAM_KEY_SECRET (or JWT_SECRET as fallback
+// — set STREAM_KEY_SECRET on Render for separation). Keys are
+// encrypted before MongoDB, never logged, never returned by any API.
+function streamKeyCipher() {
+  const secret = process.env.STREAM_KEY_SECRET || jwtSecret;
+  return crypto.createHash("sha256").update(String(secret)).digest();
+}
+function encryptStreamKey(key) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", streamKeyCipher(), iv);
+  const enc = Buffer.concat([cipher.update(String(key), "utf8"), cipher.final()]);
+  return `${iv.toString("hex")}:${cipher.getAuthTag().toString("hex")}:${enc.toString("hex")}`;
+}
+function decryptStreamKey(enc) {
+  const [ivHex, tagHex, dataHex] = String(enc).split(":");
+  const decipher = crypto.createDecipheriv("aes-256-gcm", streamKeyCipher(), Buffer.from(ivHex, "hex"));
+  decipher.setAuthTag(Buffer.from(tagHex, "hex"));
+  return Buffer.concat([decipher.update(Buffer.from(dataHex, "hex")), decipher.final()]).toString("utf8");
+}
+function maskEmail(email) {
+  const e = String(email || "");
+  const at = e.indexOf("@");
+  if (at <= 0) return "***";
+  return e.slice(0, 2) + "***" + e.slice(at);
+}
+function validEmail(email) {
+  return typeof email === "string" && /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(email.trim()) && email.trim().length <= 254;
+}
+
+// --- Login brute-force protection ------------------------------------
+// In-memory: 5 failed logins for one username+IP in 15 minutes locks
+// that login out for 15 minutes (429, clear message). Success clears
+// it. No permanent lockout — a locked-out member waits, an admin can
+// also reset the password (owner-approved). Counts are per
+// username+IP so one person's failures never lock out everyone.
+const loginFailures = new Map(); // key -> { count, firstAt, lockedUntil }
+function loginRateKey(req, username) {
+  const ip = req.ip || (req.headers["x-forwarded-for"] || "").split(",")[0] || "unknown";
+  return `${ip}|${String(username || "").toLowerCase()}`;
+}
+function loginLocked(req, username) {
+  const rec = loginFailures.get(loginRateKey(req, username));
+  if (!rec) return null;
+  if (rec.lockedUntil && Date.now() < rec.lockedUntil) return rec.lockedUntil;
+  if (Date.now() - rec.firstAt > 15 * 60 * 1000) { loginFailures.delete(loginRateKey(req, username)); return null; }
+  return null;
+}
+function recordLoginFailure(req, username) {
+  const key = loginRateKey(req, username);
+  const now = Date.now();
+  const rec = loginFailures.get(key);
+  if (!rec || now - rec.firstAt > 15 * 60 * 1000) {
+    loginFailures.set(key, { count: 1, firstAt: now, lockedUntil: 0 });
+    return;
+  }
+  rec.count += 1;
+  if (rec.count >= 5) rec.lockedUntil = now + 15 * 60 * 1000;
+}
+function clearLoginFailures(req, username) {
+  loginFailures.delete(loginRateKey(req, username));
+}
+
+// One-time verified seed (idempotent, runs on DB connect): the owner
+// (exact username Dolo45) and accounts that are already admins are
+// verified — they are known, trusted accounts, not self-verified
+// strangers. The banned lowercase "dolo45" is a separate account and
+// is never touched (sameUsername check excludes every case/whitespace
+// variant of the owner name). New members earn the badge only by
+// confirming their email.
+let verifiedSeedRan = false;
+async function ensureVerifiedSeed() {
+  if (verifiedSeedRan) return;
+  verifiedSeedRan = true;
+  try {
+    if (ADMIN_USERNAME) {
+      await User.updateOne(
+        { username: ADMIN_USERNAME, banned: { $ne: true } },
+        { $set: { verified: true, verificationStatus: "approved" } }
+      );
+    }
+    await User.updateMany(
+      { role: "admin", banned: { $ne: true }, verified: { $ne: true } },
+      { $set: { verified: true, verificationStatus: "approved" } }
+    );
+  } catch (err) { /* seed must never break startup */ }
+}
+
 // Public-safe shape for a user in admin listings: never include the
 // password field (hash included — it is never selected here).
 function publicUser(u) {
@@ -171,6 +376,8 @@ function publicUser(u) {
     avatar: dolo45Avatar(u),
     role: u.role,
     banned: Boolean(u.banned),
+    verified: Boolean(u.verified),
+    verificationStatus: u.verificationStatus || "none",
     createdAt: u.createdAt,
     friendCount: (u.friends || []).length,
     serverCount: (u.servers || []).length,
@@ -180,6 +387,14 @@ function publicUser(u) {
     online: typeof onlineUserIds !== "undefined" ? onlineUserIds.has(String(u._id)) : false,
     lastSeenAt: u.lastSeenAt || null
   };
+}
+
+// Admin-only shape: publicUser plus the account's email and email
+// verification state, for the Admin panel. Never used in any
+// public/member response — emails stay admin-only.
+function adminUser(u) {
+  const base = publicUser(u);
+  return { ...base, email: u.email || "", emailVerified: Boolean(u.emailVerified) };
 }
 
 // --- Referral codes -------------------------------------------------
@@ -411,10 +626,25 @@ app.post("/auth/register", requireDb, async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    // Optional email at signup (for verification / 2FA / reset
+    // later). Stored unverified — the member still has to confirm
+    // it by code before the checkmark or any reset works.
+    let signupEmail = "";
+    if (typeof req.body?.email === "string" && req.body.email.trim()) {
+      signupEmail = req.body.email.trim().toLowerCase();
+      if (!validEmail(signupEmail)) return res.status(400).json({ error: "Enter a valid email address" });
+      const clash = await User.findOne({ email: signupEmail });
+      if (clash) return res.status(400).json({ error: "That email is already on another Tap In account" });
+    }
     const user = await User.create({
       username,
       password: hashedPassword,
+      email: signupEmail,
       role: isOwnerUsername(username) ? "admin" : "user",
+      // Owner account (exact "Dolo45") is verified by seed, never by
+      // self-service. The banned lowercase "dolo45" never matches.
+      verified: isOwnerUsername(username),
+      verificationStatus: isOwnerUsername(username) ? "approved" : "none",
       referredBy: referrer ? referrer.username : ""
     });
 
@@ -493,9 +723,18 @@ app.post("/auth/login", requireDb, async (req, res) => {
       });
     }
 
+    // Brute-force protection: too many failed logins for this
+    // username+IP locks this login out for 15 minutes (429).
+    const lockedUntil = loginLocked(req, username);
+    if (lockedUntil) {
+      const mins = Math.max(1, Math.ceil((lockedUntil - Date.now()) / 60000));
+      return res.status(429).json({ error: `Too many failed logins — try again in about ${mins} minute${mins === 1 ? "" : "s"}.` });
+    }
+
     const user = (await User.findOne({ username })) || (await findUserByUsername(User, username));
 
     if (!user) {
+      recordLoginFailure(req, username);
       return res.status(400).json({
         error: "User not found"
       });
@@ -504,10 +743,12 @@ app.post("/auth/login", requireDb, async (req, res) => {
     const match = await bcrypt.compare(password, user.password);
 
     if (!match) {
+      recordLoginFailure(req, username);
       return res.status(400).json({
         error: "Incorrect password"
       });
     }
+    clearLoginFailures(req, username);
 
     if (user.banned) {
       return res.status(403).json({
@@ -521,6 +762,44 @@ app.post("/auth/login", requireDb, async (req, res) => {
       user.role = "admin";
       await user.save();
     }
+    // Owner is always verified (exact "Dolo45" only).
+    if (isOwnerUsername(user.username) && !user.verified) {
+      user.verified = true;
+      user.verificationStatus = "approved";
+      await user.save();
+    }
+
+    // --- Admin two-factor (email code) --------------------------------
+    // Admins (including Dolo45) must enter a one-time code emailed to
+    // the verified email on their account, AFTER the password, before
+    // they get a full admin token. Non-admins log in normally.
+    // If email sending is NOT configured, 2FA cannot run: the admin
+    // logs in normally instead (token twoFactorVerified=false) and
+    // requireAdmin lets them through — never lock the owner out over
+    // a code that was never sent. The frontend shows "2FA not active
+    // yet" in that case. If email IS configured but the admin has no
+    // verified email yet, they get a temp token and must set + verify
+    // their email first (needsEmail).
+    if (user.role === "admin") {
+      if (emailConfigured() && user.emailVerified && user.email) {
+        const code = makeSixDigitCode();
+        const sent = await sendEmail(user.email, "Tap In admin sign-in code",
+          `Your Tap In admin sign-in code is ${code}. It expires in 15 minutes. If this wasn't you, change your password and tell Dolo45.`);
+        if (sent.sent) {
+          user.twoFactorCodeHash = hashCode(code);
+          user.twoFactorCodeExpiresAt = new Date(Date.now() + CODE_TTL_MS);
+          user.twoFactorCodeAttempts = 0;
+          user.twoFactorCodeSentAt = new Date();
+          await user.save();
+          const tempToken = jwt.sign({ id: user._id, username: user.username, role: user.role, purpose: "2fa" }, jwtSecret, { expiresIn: "10m" });
+          return res.json({ success: false, twoFactorRequired: true, emailConfigured: true, maskedEmail: maskEmail(user.email), tempToken });
+        }
+        console.warn("Admin 2FA code could not be sent — email send failed; admin login continues without 2FA this time.");
+      } else if (emailConfigured()) {
+        const tempToken = jwt.sign({ id: user._id, username: user.username, role: user.role, purpose: "2fa" }, jwtSecret, { expiresIn: "10m" });
+        return res.json({ success: false, twoFactorRequired: true, needsEmail: true, emailConfigured: true, tempToken });
+      }
+    }
 
     // Backfill: accounts created before referral codes get theirs
     // on login, so every existing member has a code to share.
@@ -531,7 +810,10 @@ app.post("/auth/login", requireDb, async (req, res) => {
       {
         id: user._id,
         username: user.username,
-        role: user.role
+        role: user.role,
+        purpose: "full",
+        tokenVersion: user.tokenVersion || 0,
+        twoFactorVerified: user.role !== "admin" || !emailConfigured()
       },
       jwtSecret,
       {
@@ -551,7 +833,10 @@ app.post("/auth/login", requireDb, async (req, res) => {
         referredBy: user.referredBy || "",
         profileSong: user.profileSong && user.profileSong.url ? user.profileSong : null,
         role: user.role,
-        banned: Boolean(user.banned)
+        banned: Boolean(user.banned),
+        verified: Boolean(user.verified),
+        emailConfigured: emailConfigured(),
+        twoFactorPending: user.role === "admin" && !emailConfigured()
       }
     });
   } catch (err) {
@@ -565,7 +850,7 @@ app.get("/users/:id", requireDb, async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ error: "User not found" });
-    res.json({ id: user._id, username: user.username, bio: user.bio, avatar: dolo45Avatar(user), profileSong: user.profileSong && user.profileSong.url ? user.profileSong : null, friends: user.friends, servers: user.servers, socialLinks: publicSocialLinks(user) });
+    res.json({ id: user._id, username: user.username, bio: user.bio, avatar: dolo45Avatar(user), verified: Boolean(user.verified), profileSong: user.profileSong && user.profileSong.url ? user.profileSong : null, friends: user.friends, servers: user.servers, socialLinks: publicSocialLinks(user) });
   } catch (err) {
     res.status(500).json({
       error: err.message
@@ -616,7 +901,7 @@ app.patch("/users/:id", requireDb, requireAuth, async (req, res) => {
       }
     }
     await target.save();
-    res.json({ id: target._id, username: target.username, bio: target.bio, avatar: target.avatar, profileSong: target.profileSong && target.profileSong.url ? target.profileSong : null, friends: target.friends, servers: target.servers, socialLinks: publicSocialLinks(target) });
+    res.json({ id: target._id, username: target.username, bio: target.bio, avatar: target.avatar, verified: Boolean(target.verified), profileSong: target.profileSong && target.profileSong.url ? target.profileSong : null, friends: target.friends, servers: target.servers, socialLinks: publicSocialLinks(target) });
   } catch (err) {
     res.status(500).json({
       error: err.message
@@ -644,13 +929,349 @@ app.post("/profile/social-links", requireDb, requireAuth, async (req, res) => {
   }
 });
 
+
+// --- Email verification + admin 2FA + password reset -----------------
+// All three share one email path (SMTP env, see emailConfigured()).
+// When email is NOT configured, every endpoint says so plainly and
+// no code is issued or sent — nothing is faked, and no badge /
+// login / reset can be completed on a code that never arrived.
+
+// GET /verification/status — my own verification state (logged in).
+app.get("/verification/status", requireDb, requireAuth, async (req, res) => {
+  res.json({
+    success: true,
+    verified: Boolean(req.user.verified),
+    emailVerified: Boolean(req.user.emailVerified),
+    verificationStatus: req.user.verificationStatus || "none",
+    email: req.user.email || "",
+    emailConfigured: emailConfigured()
+  });
+});
+
+// POST /verification/request — send a 6-digit code to the email on my
+// account (body { email } to set/change it first). Auth (full or 2FA
+// temp token). Code is stored hashed, 15-min expiry, 60s resend
+// cooldown. If email is not configured: 503, no code stored.
+app.post("/verification/request", requireDb, authAny, async (req, res) => {
+  try {
+    const user = req.user;
+    let email = user.email || "";
+    if (typeof req.body?.email === "string" && req.body.email.trim()) {
+      email = req.body.email.trim().toLowerCase();
+    }
+    if (!validEmail(email)) return res.status(400).json({ error: "Enter a valid email address" });
+    const clash = await User.findOne({ email, _id: { $ne: user._id } });
+    if (clash) return res.status(400).json({ error: "That email is already on another Tap In account" });
+    if (user.emailCodeSentAt && Date.now() - new Date(user.emailCodeSentAt).getTime() < 60000) {
+      return res.status(429).json({ error: "A code was just sent — wait a minute before asking again" });
+    }
+    if (!emailConfigured()) {
+      return res.status(503).json({ error: "Email sending is not set up yet — Tap In cannot send a verification code until an email service is connected. Ask Dolo45 to set up SMTP on the backend.", emailConfigured: false });
+    }
+    user.email = email;
+    const code = makeSixDigitCode();
+    const sent = await sendEmail(email, "Tap In verification code",
+      `Your Tap In verification code is ${code}. It expires in 15 minutes. Enter it in Tap In to get your verified checkmark. If this wasn't you, ignore this email.`);
+    if (!sent.sent) return res.status(503).json({ error: "The verification email could not be sent — please try again later", emailConfigured: true });
+    user.emailCodeHash = hashCode(code);
+    user.emailCodeExpiresAt = new Date(Date.now() + CODE_TTL_MS);
+    user.emailCodeAttempts = 0;
+    user.emailCodeSentAt = new Date();
+    user.verificationStatus = "pending";
+    await user.save();
+    res.json({ success: true, emailSent: true, maskedEmail: maskEmail(email) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /verification/confirm — enter the code. On success the member
+// is verified (checkmark). 5 wrong tries invalidates the code.
+app.post("/verification/confirm", requireDb, authAny, async (req, res) => {
+  try {
+    const user = req.user;
+    const code = typeof req.body?.code === "string" ? req.body.code.trim() : "";
+    if (!/^\d{6}$/.test(code)) return res.status(400).json({ error: "Enter the 6-digit code from your email" });
+    if (!user.emailCodeHash || !user.emailCodeExpiresAt) {
+      return res.status(400).json({ error: "No verification code was sent — request a code first" });
+    }
+    if (Date.now() > new Date(user.emailCodeExpiresAt).getTime()) {
+      user.emailCodeHash = ""; user.emailCodeExpiresAt = null;
+      await user.save();
+      return res.status(400).json({ error: "That code expired — request a new one" });
+    }
+    if ((user.emailCodeAttempts || 0) >= CODE_MAX_ATTEMPTS) {
+      user.emailCodeHash = ""; user.emailCodeExpiresAt = null;
+      await user.save();
+      return res.status(400).json({ error: "Too many wrong tries — request a new code" });
+    }
+    if (!codeMatches(code, user.emailCodeHash)) {
+      user.emailCodeAttempts = (user.emailCodeAttempts || 0) + 1;
+      await user.save();
+      return res.status(400).json({ error: "That code is wrong — check your email and try again" });
+    }
+    user.emailVerified = true;
+    user.verified = true;
+    user.verificationStatus = "approved";
+    user.emailCodeHash = ""; user.emailCodeExpiresAt = null; user.emailCodeAttempts = 0;
+    await user.save();
+    res.json({ success: true, verified: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /auth/verify-2fa — finish an admin login: { tempToken, code }.
+// Returns a full token with twoFactorVerified=true.
+app.post("/auth/verify-2fa", requireDb, async (req, res) => {
+  try {
+    const { tempToken, code } = req.body || {};
+    if (!tempToken || typeof code !== "string") return res.status(400).json({ error: "Enter the 6-digit code" });
+    let decoded;
+    try { decoded = jwt.verify(tempToken, jwtSecret); } catch (err) {
+      return res.status(401).json({ error: "That sign-in session expired — log in again" });
+    }
+    if (decoded.purpose !== "2fa") return res.status(401).json({ error: "That token is not a two-factor session" });
+    const user = await User.findById(decoded.id);
+    if (!user || user.banned) return res.status(403).json({ error: "This account has been banned" });
+    if (user.role !== "admin") return res.status(403).json({ error: "Two-factor is for admins only" });
+    if (!user.twoFactorCodeHash || !user.twoFactorCodeExpiresAt) {
+      return res.status(400).json({ error: "No sign-in code was sent — log in again" });
+    }
+    if (Date.now() > new Date(user.twoFactorCodeExpiresAt).getTime()) {
+      user.twoFactorCodeHash = ""; user.twoFactorCodeExpiresAt = null;
+      await user.save();
+      return res.status(400).json({ error: "That code expired — log in again" });
+    }
+    if ((user.twoFactorCodeAttempts || 0) >= CODE_MAX_ATTEMPTS) {
+      user.twoFactorCodeHash = ""; user.twoFactorCodeExpiresAt = null;
+      await user.save();
+      return res.status(400).json({ error: "Too many wrong tries — log in again" });
+    }
+    if (!codeMatches(code, user.twoFactorCodeHash)) {
+      user.twoFactorCodeAttempts = (user.twoFactorCodeAttempts || 0) + 1;
+      await user.save();
+      return res.status(400).json({ error: "That code is wrong — check your email and try again" });
+    }
+    user.twoFactorCodeHash = ""; user.twoFactorCodeExpiresAt = null; user.twoFactorCodeAttempts = 0;
+    await user.save();
+    const token = jwt.sign({ id: user._id, username: user.username, role: user.role, purpose: "full", tokenVersion: user.tokenVersion || 0, twoFactorVerified: true }, jwtSecret, { expiresIn: "30d" });
+    res.json({ success: true, token, user: { id: user._id, username: user.username, role: user.role, verified: Boolean(user.verified), emailConfigured: emailConfigured() } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /auth/2fa/setup-email — admin with a temp token but no verified
+// email: set the email and send the VERIFICATION code to it. The
+// admin then confirms it via /verification/confirm (temp token
+// works there), and logs in again for the 2FA code.
+app.post("/auth/2fa/setup-email", requireDb, authAny, async (req, res) => {
+  try {
+    if (req.tokenPurpose !== "2fa") return res.status(400).json({ error: "Use this during an admin sign-in" });
+    const user = req.user;
+    if (user.role !== "admin") return res.status(403).json({ error: "Two-factor setup is for admins only" });
+    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    if (!validEmail(email)) return res.status(400).json({ error: "Enter a valid email address" });
+    const clash = await User.findOne({ email, _id: { $ne: user._id } });
+    if (clash) return res.status(400).json({ error: "That email is already on another Tap In account" });
+    if (!emailConfigured()) {
+      return res.status(503).json({ error: "Email sending is not set up yet — Tap In cannot send a verification code until an email service is connected.", emailConfigured: false });
+    }
+    user.email = email;
+    const code = makeSixDigitCode();
+    const sent = await sendEmail(email, "Tap In verification code",
+      `Your Tap In verification code is ${code}. It expires in 15 minutes. Enter it in Tap In to verify your email. If this wasn't you, ignore this email.`);
+    if (!sent.sent) return res.status(503).json({ error: "The verification email could not be sent — please try again later", emailConfigured: true });
+    user.emailCodeHash = hashCode(code);
+    user.emailCodeExpiresAt = new Date(Date.now() + CODE_TTL_MS);
+    user.emailCodeAttempts = 0;
+    user.emailCodeSentAt = new Date();
+    user.verificationStatus = "pending";
+    await user.save();
+    res.json({ success: true, emailSent: true, maskedEmail: maskEmail(email) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Password reset (owner-approved) ----------------------------------
+// Wesley's rule (Nov 16): NO reset code goes out until Dolo45
+// approves the request in the Admin panel. Flow: member asks by
+// email -> Dolo45 sees it in Admin -> approve (code emailed) or deny
+// (no code, member told it was not approved) -> member resets with
+// the code -> confirmation notification. The response to a request
+// NEVER reveals whether an account exists for that email, and a
+// banned account can never reset.
+// GET /auth/me — who this token belongs to. Lets the app recover
+// the logged-in username/role from a token alone (older sessions
+// stored a token but no username in localStorage, so the shell kept
+// showing Log in / Sign up while logged in). Auth only, own account.
+app.get("/auth/me", requireDb, requireAuth, async (req, res) => {
+  res.json({
+    success: true,
+    user: {
+      id: req.user._id,
+      username: req.user.username,
+      role: req.user.role,
+      verified: Boolean(req.user.verified),
+      emailVerified: Boolean(req.user.emailVerified)
+    }
+  });
+});
+
+const RESET_RESPONSE = "If an account uses that email, Dolo45 will review the reset request. If it is approved, a code will be emailed to that address.";
+app.post("/auth/forgot-password", requireDb, async (req, res) => {
+  try {
+    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    if (validEmail(email)) {
+      const user = await User.findOne({ email });
+      if (user && !user.banned) {
+        user.passwordResetRequest = { status: "pending", requestedAt: new Date(), decidedAt: null, decidedBy: "" };
+        user.passwordResetCodeHash = ""; user.passwordResetExpiresAt = null; user.passwordResetAttempts = 0;
+        await user.save();
+        try {
+          const admins = await User.find({ role: "admin", banned: { $ne: true } }).select("_id");
+          for (const admin of admins) {
+            await createNotification(admin._id, {
+              type: "password_reset_request",
+              title: "Password reset request — needs your approval",
+              body: `${user.username} asked to reset their password (${maskEmail(email)}). Approve or deny it in the Admin panel — no code is sent until you approve.`,
+              fromUsername: user.username,
+              refId: user.username
+            });
+          }
+        } catch (err) { /* request is saved; notification is a bonus */ }
+      }
+    }
+    res.json({ success: true, message: RESET_RESPONSE });
+  } catch (err) {
+    res.json({ success: true, message: RESET_RESPONSE });
+  }
+});
+
+// POST /auth/reset-password — { email, code, newPassword }. Only
+// works after owner approval AND a valid emailed code. One-time use:
+// the code is cleared on success, and tokenVersion is bumped so
+// every old token stops working.
+app.post("/auth/reset-password", requireDb, async (req, res) => {
+  try {
+    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    const code = typeof req.body?.code === "string" ? req.body.code.trim() : "";
+    const newPassword = typeof req.body?.newPassword === "string" ? req.body.newPassword : "";
+    const generic = "That reset code is wrong, expired, or not approved — ask for a new reset and wait for Dolo45 to approve it.";
+    if (!validEmail(email) || !/^\d{6}$/.test(code) || newPassword.length < 6) {
+      return res.status(400).json({ error: newPassword.length < 6 ? "New password must be at least 6 characters" : generic });
+    }
+    const user = await User.findOne({ email });
+    if (!user || user.banned) return res.status(400).json({ error: generic });
+    if (!user.passwordResetRequest || user.passwordResetRequest.status !== "approved") {
+      return res.status(400).json({ error: generic });
+    }
+    if (!user.passwordResetCodeHash || !user.passwordResetExpiresAt || Date.now() > new Date(user.passwordResetExpiresAt).getTime()) {
+      return res.status(400).json({ error: generic });
+    }
+    if ((user.passwordResetAttempts || 0) >= CODE_MAX_ATTEMPTS) return res.status(400).json({ error: generic });
+    if (!codeMatches(code, user.passwordResetCodeHash)) {
+      user.passwordResetAttempts = (user.passwordResetAttempts || 0) + 1;
+      await user.save();
+      return res.status(400).json({ error: generic });
+    }
+    user.password = await bcrypt.hash(newPassword, 10);
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
+    user.passwordResetCodeHash = ""; user.passwordResetExpiresAt = null; user.passwordResetAttempts = 0;
+    user.passwordResetRequest = { status: "none", requestedAt: null, decidedAt: null, decidedBy: "" };
+    user.twoFactorCodeHash = ""; user.twoFactorCodeExpiresAt = null;
+    await user.save();
+    await createNotification(user._id, {
+      type: "password_changed",
+      title: "Your Tap In password was changed",
+      body: "Your password was just changed. If this wasn't you, tell Dolo45 right away.",
+      fromUsername: "Tap In",
+      refId: ""
+    });
+    res.json({ success: true, message: "Password changed — log in with your new password." });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Multistream destinations ---------------------------------------
+// A streamer saves their OWN RTMP ingest URL + stream key per
+// platform, to broadcast OUT of Tap In. Only the owner of the
+// account can read/write their own list; the API never returns a
+// key (only platform, URL, enabled, and last-4 for identification).
+// Tap In does NOT restream by itself — its video rooms are WebRTC.
+// To actually go live elsewhere, the streamer copies these into
+// OBS multistream (or Restream) and starts streaming there, while
+// also going live in Tap In. See STREAMING.md. Nothing
+// auto-broadcasts anywhere: a destination only matters when the
+// streamer turns it on AND starts their own OBS/Restream feed.
+const STREAM_PLATFORMS = {
+  youtube: "rtmp://a.rtmp.youtube.com/live2",
+  facebook: "rtmps://live-upload.facebook.com:443/rtmp/",
+  twitch: "rtmp://live.twitch.tv/app",
+  tiktok: "",
+  instagram: "rtmps://live-upload.instagram.com:443/rtmp/"
+};
+function publicDestination(d) {
+  return { platform: d.platform, rtmpUrl: d.rtmpUrl || "", enabled: Boolean(d.enabled), hasKey: Boolean(d.keyEnc), keyLast4: d.keyLast4 || "", updatedAt: d.updatedAt || null };
+}
+app.get("/stream/destinations", requireDb, requireAuth, async (req, res) => {
+  res.json({ success: true, destinations: (req.user.streamDestinations || []).map(publicDestination) });
+});
+app.post("/stream/destinations", requireDb, requireAuth, async (req, res) => {
+  try {
+    const platform = typeof req.body?.platform === "string" ? req.body.platform.trim().toLowerCase() : "";
+    const rtmpUrl = typeof req.body?.rtmpUrl === "string" ? req.body.rtmpUrl.trim().slice(0, 300) : "";
+    const streamKey = typeof req.body?.streamKey === "string" ? req.body.streamKey.trim() : "";
+    const enabled = req.body?.enabled === true;
+    if (!Object.keys(STREAM_PLATFORMS).includes(platform)) {
+      return res.status(400).json({ error: "Platform must be youtube, facebook, twitch, tiktok or instagram" });
+    }
+    if (rtmpUrl && !/^rtmps?:\/\/[^\s]+$/.test(rtmpUrl)) {
+      return res.status(400).json({ error: "Stream URL must start with rtmp:// or rtmps://" });
+    }
+    if (streamKey && (streamKey.length < 4 || streamKey.length > 200)) {
+      return res.status(400).json({ error: "Stream key looks wrong — paste the full key from that platform" });
+    }
+    const list = req.user.streamDestinations || [];
+    let dest = list.find((d) => d.platform === platform);
+    if (!dest) { dest = { platform, rtmpUrl: "", keyEnc: "", keyLast4: "", enabled: false, updatedAt: new Date() }; list.push(dest); }
+    if (rtmpUrl) dest.rtmpUrl = rtmpUrl;
+    else if (!dest.rtmpUrl) dest.rtmpUrl = STREAM_PLATFORMS[platform] || "";
+    if (streamKey) { dest.keyEnc = encryptStreamKey(streamKey); dest.keyLast4 = streamKey.slice(-4); }
+    dest.enabled = enabled;
+    dest.updatedAt = new Date();
+    req.user.streamDestinations = list;
+    await req.user.save();
+    res.json({ success: true, destinations: list.map(publicDestination) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+app.delete("/stream/destinations/:platform", requireDb, requireAuth, async (req, res) => {
+  try {
+    const platform = String(req.params.platform || "").toLowerCase();
+    req.user.streamDestinations = (req.user.streamDestinations || []).filter((d) => d.platform !== platform);
+    await req.user.save();
+    res.json({ success: true, destinations: req.user.streamDestinations.map(publicDestination) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Feed posts (real user posts only — no sample posts) ---------------
+
 
 // GET /posts — public read, newest first.
 app.get("/posts", requireDb, async (req, res) => {
   try {
     const posts = await Post.find({}).sort({ createdAt: -1 }).limit(100);
-    res.json({ posts: posts.map(publicPost) });
+    const names = [...new Set(posts.map((p) => p.username))];
+    const users = await User.find({ username: { $in: names } }).select("username verified");
+    const verifiedByName = new Map(users.map((u) => [u.username, Boolean(u.verified)]));
+    res.json({ posts: posts.map((p) => ({ ...publicPost(p), verified: verifiedByName.get(p.username) || false })) });
   } catch (err) {
     res.status(500).json({
       error: err.message
@@ -831,8 +1452,9 @@ app.get("/admin/uploads", requireDb, requireAuth, requireAdmin, async (req, res)
 // ChatFlag) — never in memory, never on Render's disk — so a Render
 // restart or spin-down never loses anyone's chats. Every route and
 // every socket event checks membership first: only members can see,
-// join, read or send in a room, and only an admin can review rooms
-// for safety. The global chat is untouched by all of this.
+// join, read or send in a room, and ONLY the owner (exact Dolo45)
+// can review rooms for safety — never other admins, never other
+// members. The global chat is untouched by all of this.
 
 function publicChatRoom(room, viewerId) {
   const members = (room.memberUsernames || []).slice();
@@ -899,6 +1521,23 @@ async function savePrivateMessage(room, sender, text) {
       text,
       reasons: flags.map((f) => f.label)
     });
+    // Alert ONLY the owner (exact Dolo45) — for his review only.
+    // No other admin or member is told, and nothing is blocked,
+    // filtered, or auto-banned: the message was already saved and
+    // delivered above. The alert carries the sender + the reason,
+    // not the message text.
+    try {
+      const owner = await User.findOne({ username: ADMIN_USERNAME });
+      if (owner && !owner.banned) {
+        await createNotification(owner._id, {
+          type: "safety_flag",
+          title: "Safety alert — private chat needs your review",
+          body: `${sender.username}: ${flags.map((f) => f.label).join(" · ")}`,
+          fromUsername: sender.username,
+          refId: String(room._id)
+        });
+      }
+    } catch (err) { /* flag is stored; the alert is a bonus */ }
   }
   // Notify every other member of the room about the new message, so
   // it shows up in their bell even when they aren't looking at chat.
@@ -987,7 +1626,7 @@ app.get("/members", requireDb, requireAuth, async (req, res) => {
       filter.username = { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
     }
     const users = await User.find(filter)
-      .select("_id username bio avatar role lastSeenAt friendRequests socialLinks")
+      .select("_id username bio avatar role verified lastSeenAt friendRequests socialLinks")
       .sort({ username: 1 })
       .limit(100);
     const myFriends = req.user.friends || [];
@@ -1000,6 +1639,7 @@ app.get("/members", requireDb, requireAuth, async (req, res) => {
         bio: (u.bio || "").slice(0, 120),
         avatar: dolo45Avatar(u),
         role: u.role,
+        verified: Boolean(u.verified),
         socialLinks: publicSocialLinks(u),
         online: onlineUserIds.has(String(u._id)),
         lastSeenAt: u.lastSeenAt || null,
@@ -1021,8 +1661,8 @@ app.get("/users", requireDb, requireAuth, async (req, res) => {
     const filter = q
       ? { username: { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" } }
       : {};
-    const users = await User.find(filter).select("_id username role socialLinks").sort({ username: 1 }).limit(20);
-    res.json({ success: true, users: users.map((u) => ({ id: u._id, username: u.username, role: u.role, socialLinks: publicSocialLinks(u) })) });
+    const users = await User.find(filter).select("_id username role verified socialLinks").sort({ username: 1 }).limit(20);
+    res.json({ success: true, users: users.map((u) => ({ id: u._id, username: u.username, role: u.role, verified: Boolean(u.verified), socialLinks: publicSocialLinks(u) })) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1042,7 +1682,7 @@ app.get("/chat/presence", requireDb, requireAuth, async (req, res) => {
       for (const n of r.memberUsernames || []) names.add(String(n));
     }
     ids.add(String(req.user._id));
-    const users = await User.find({ _id: { $in: [...ids] } }).select("_id username lastSeenAt");
+    const users = await User.find({ _id: { $in: [...ids] } }).select("_id username verified lastSeenAt");
     const byName = new Map();
     for (const u of users) byName.set(u.username, u);
     // Friend names are plain strings typed by the other person, so a
@@ -1060,6 +1700,7 @@ app.get("/chat/presence", requireDb, requireAuth, async (req, res) => {
       presence: all.map((u) => ({
         userId: String(u._id),
         username: u.username,
+        verified: Boolean(u.verified),
         online: onlineUserIds.has(String(u._id)),
         lastSeenAt: u.lastSeenAt || null
       }))
@@ -1070,6 +1711,46 @@ app.get("/chat/presence", requireDb, requireAuth, async (req, res) => {
 });
 
 // GET /chat/rooms — rooms the logged-in user belongs to, newest first.
+// GET /chat/search?q= — search MY private chats and groups by
+// username or message text. Only rooms I'm a member of are ever
+// searched or returned — never anyone else's chats. Banned users
+// never appear: a DM whose other member is banned is skipped, and
+// messages from banned senders are never used as snippets.
+app.get("/chat/search", requireDb, requireAuth, async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+    if (q.length < 2) return res.json({ success: true, rooms: [] });
+    const esc = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(esc, "i");
+    const myRooms = await ChatRoom.find({ members: req.user._id }).sort({ updatedAt: -1 }).limit(100);
+    const bannedUsers = await User.find({ banned: true }).select("username");
+    const bannedNames = new Set(bannedUsers.map((u) => u.username));
+    const roomIds = myRooms.map((r) => r._id);
+    const matchedMsgs = await ChatMessage.find({ room: { $in: roomIds }, text: re }).sort({ createdAt: -1 }).limit(100);
+    const msgByRoom = new Map();
+    for (const m of matchedMsgs) {
+      if (bannedNames.has(m.senderUsername)) continue;
+      if (!msgByRoom.has(String(m.room))) msgByRoom.set(String(m.room), m);
+    }
+    const out = [];
+    for (const room of myRooms) {
+      const others = (room.memberUsernames || []).filter((n) => n !== req.user.username);
+      if (others.length && others.every((n) => bannedNames.has(n))) continue;
+      const byName = others.some((n) => re.test(n)) || re.test(room.name || "");
+      const byMsg = msgByRoom.get(String(room._id));
+      if (!byName && !byMsg) continue;
+      out.push({
+        ...publicChatRoom(room, req.user._id),
+        matchedBy: byName ? "username" : "message",
+        snippet: byMsg ? { senderUsername: byMsg.senderUsername, text: byMsg.text.slice(0, 120), createdAt: byMsg.createdAt } : null
+      });
+    }
+    res.json({ success: true, rooms: out.slice(0, 20) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/chat/rooms", requireDb, requireAuth, async (req, res) => {
   try {
     const roomsList = await ChatRoom.find({ members: req.user._id }).sort({ updatedAt: -1 }).limit(100);
@@ -1231,15 +1912,19 @@ app.delete("/chat/rooms/:id/members/:userId", requireDb, requireAuth, async (req
   }
 });
 
-// --- Admin safety monitor (private chats) ---------------------------
-// Admin only. The owner can list every private room, read a room's
-// history for safety review, and see + mark safety flags. This is
-// moderation for the owner's own app — it never exposes private
-// messages to non-admin users.
+// --- Safety monitor (private chats) — OWNER ONLY ----------------------
+// Wesley's rule (Nov 16): private chat is PRIVATE. Only the people
+// in that chat can see it. Wesley (exact Dolo45) screens it himself.
+// Other admins / members can NEVER read someone else's private
+// chats. The monitor ONLY alerts Dolo45 when it sees malicious
+// behaviour, for his review only — no auto-action, no message
+// blocking, no filtering, no auto-ban. Messages are always saved
+// and delivered first (see savePrivateMessage); a flag never stops
+// a message. requireOwner enforces this on every route below.
 
 // GET /admin/chat/rooms — every private room, with member names and
 // message counts, newest activity first.
-app.get("/admin/chat/rooms", requireDb, requireAuth, requireAdmin, async (req, res) => {
+app.get("/admin/chat/rooms", requireDb, requireAuth, requireAdmin, requireOwner, async (req, res) => {
   try {
     const roomsList = await ChatRoom.find({}).sort({ updatedAt: -1 }).limit(100);
     const roomsOut = [];
@@ -1254,7 +1939,7 @@ app.get("/admin/chat/rooms", requireDb, requireAuth, requireAdmin, async (req, r
 });
 
 // GET /admin/chat/rooms/:id/messages — a room's full history, admin only.
-app.get("/admin/chat/rooms/:id/messages", requireDb, requireAuth, requireAdmin, async (req, res) => {
+app.get("/admin/chat/rooms/:id/messages", requireDb, requireAuth, requireAdmin, requireOwner, async (req, res) => {
   try {
     const room = await loadRoomOr404(req, res);
     if (!room) return;
@@ -1267,7 +1952,7 @@ app.get("/admin/chat/rooms/:id/messages", requireDb, requireAuth, requireAdmin, 
 
 // GET /admin/chat/flags — safety flags, newest first. ?reviewed=true
 // or ?reviewed=false filters; unreviewed first by default.
-app.get("/admin/chat/flags", requireDb, requireAuth, requireAdmin, async (req, res) => {
+app.get("/admin/chat/flags", requireDb, requireAuth, requireAdmin, requireOwner, async (req, res) => {
   try {
     const filter = {};
     if (req.query.reviewed === "true") filter.reviewed = true;
@@ -1277,8 +1962,8 @@ app.get("/admin/chat/flags", requireDb, requireAuth, requireAdmin, async (req, r
       success: true,
       flags: flags.map((f) => ({
         id: f._id,
-        message: String(f.message),
-        room: String(f.room),
+        message: f.message ? String(f.message) : null,
+        room: f.room ? String(f.room) : null,
         roomName: f.roomName,
         senderId: f.senderId ? String(f.senderId) : null,
         senderUsername: f.senderUsername,
@@ -1297,7 +1982,7 @@ app.get("/admin/chat/flags", requireDb, requireAuth, requireAdmin, async (req, r
 // POST /admin/chat/flags/:id/review — mark a flag reviewed (admin
 // only). Body: { "reviewed": true, "note": "..." }. A flag is only a
 // "look at this" — reviewing it bans nobody by itself.
-app.post("/admin/chat/flags/:id/review", requireDb, requireAuth, requireAdmin, async (req, res) => {
+app.post("/admin/chat/flags/:id/review", requireDb, requireAuth, requireAdmin, requireOwner, async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) return res.status(404).json({ error: "Flag not found" });
     const flag = await ChatFlag.findById(req.params.id);
@@ -1638,7 +2323,49 @@ app.post("/servers/create", requireDb, async (req, res) => {
 app.get("/admin/users", requireDb, requireAuth, requireAdmin, async (req, res) => {
   try {
     const users = await User.find({}).select("-password").sort({ createdAt: 1 });
-    res.json({ success: true, users: users.map(publicUser) });
+    res.json({ success: true, users: users.map(adminUser), emailConfigured: emailConfigured() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /admin/users/:id/profile — the member's WHOLE profile, for
+// admins only (owner Dolo45 + other admins). Bio, avatar, uploads,
+// profile music, social links, friends, servers, verification
+// status, online / last seen, referral info. The account email is
+// included for moderation only — it never appears in any member
+// response. This endpoint NEVER returns a password, password hash,
+// auth token, or any 2FA / reset code (hashed or not): the response
+// is built field-by-field from adminUser() plus the lists below, and
+// the raw user document is never spread into it.
+app.get("/admin/users/:id/profile", requireDb, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(404).json({ error: "User not found" });
+    const target = await User.findById(req.params.id).select("-password");
+    if (!target) return res.status(404).json({ error: "User not found" });
+    const uploads = await Upload.find({ userId: target._id }).sort({ createdAt: -1 }).limit(50);
+    const referralCount = await User.countDocuments({ referredBy: target.username });
+    res.json({
+      success: true,
+      user: adminUser(target),
+      profileSong: target.profileSong && target.profileSong.url ? target.profileSong : null,
+      friends: target.friends || [],
+      servers: target.servers || [],
+      referral: {
+        code: target.referralCode || "",
+        referredBy: target.referredBy || "",
+        referralCount
+      },
+      uploads: uploads.map((u) => ({
+        id: u._id,
+        originalName: u.originalName,
+        mimeType: u.mimeType,
+        size: u.size,
+        kind: u.kind,
+        createdAt: u.createdAt,
+        url: `/uploads/${u.fileId}`
+      }))
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1689,7 +2416,106 @@ app.post("/admin/users/:id/ban", requireDb, requireAuth, requireAdmin, async (re
   }
 });
 
+
+// POST /admin/users/:id/verify-revoke — take the verified badge off
+// an account (admin only, 2FA-gated when email is configured).
+// Admins can REVOKE only — they can never grant a badge without
+// email proof. Cannot revoke yourself, and cannot revoke the owner
+// (exact Dolo45) unless you ARE Dolo45.
+app.post("/admin/users/:id/verify-revoke", requireDb, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const target = await User.findById(req.params.id);
+    if (!target) return res.status(404).json({ error: "User not found" });
+    if (String(target._id) === String(req.user._id)) {
+      return res.status(400).json({ error: "You cannot revoke your own verified badge" });
+    }
+    if (isOwnerUsername(target.username) && !isOwnerUsername(req.user.username)) {
+      return res.status(403).json({ error: "Only Dolo45 can change Dolo45's verified badge" });
+    }
+    target.verified = false;
+    target.verificationStatus = "revoked";
+    await target.save();
+    res.json({ success: true, user: adminUser(target) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /admin/password-resets — pending owner-approval requests.
+app.get("/admin/password-resets", requireDb, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const users = await User.find({ "passwordResetRequest.status": "pending" }).select("_id username email passwordResetRequest").sort({ "passwordResetRequest.requestedAt": 1 });
+    res.json({ success: true, emailConfigured: emailConfigured(), requests: users.map((u) => ({ id: u._id, username: u.username, email: u.email || "", requestedAt: u.passwordResetRequest.requestedAt })) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /admin/password-resets/:id/approve — Dolo45 approves: ONLY
+// now is the reset code emailed to the member. If email is not
+// configured, approval is refused (503) and the request stays
+// pending — never approve-and-pretend a code went out.
+app.post("/admin/password-resets/:id/approve", requireDb, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const target = await User.findById(req.params.id);
+    if (!target) return res.status(404).json({ error: "User not found" });
+    if (!target.passwordResetRequest || target.passwordResetRequest.status !== "pending") {
+      return res.status(400).json({ error: "That reset request is not pending" });
+    }
+    if (!target.email) return res.status(400).json({ error: "That account has no email to send a code to" });
+    if (!emailConfigured()) {
+      return res.status(503).json({ error: "Email sending is not set up yet — a reset code cannot be sent until an email service is connected. The request stays pending.", emailConfigured: false });
+    }
+    const code = makeSixDigitCode();
+    const sent = await sendEmail(target.email, "Tap In password reset code",
+      `Your Tap In password reset code is ${code}. It expires in 15 minutes. Dolo45 approved this reset. If this wasn't you, ignore this email and tell Dolo45.`);
+    if (!sent.sent) return res.status(503).json({ error: "The reset email could not be sent — please try again later", emailConfigured: true });
+    target.passwordResetCodeHash = hashCode(code);
+    target.passwordResetExpiresAt = new Date(Date.now() + CODE_TTL_MS);
+    target.passwordResetAttempts = 0;
+    target.passwordResetSentAt = new Date();
+    target.passwordResetRequest = { status: "approved", requestedAt: target.passwordResetRequest.requestedAt, decidedAt: new Date(), decidedBy: req.user.username };
+    await target.save();
+    await createNotification(target._id, {
+      type: "password_reset_approved",
+      title: "Your password reset was approved",
+      body: "Dolo45 approved your reset — check your email for the 6-digit code, then reset your password in Tap In.",
+      fromUsername: req.user.username,
+      refId: ""
+    });
+    res.json({ success: true, message: "Approved — the reset code was emailed to the member." });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /admin/password-resets/:id/deny — no code is sent. The member
+// is told the request was not approved.
+app.post("/admin/password-resets/:id/deny", requireDb, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const target = await User.findById(req.params.id);
+    if (!target) return res.status(404).json({ error: "User not found" });
+    if (!target.passwordResetRequest || target.passwordResetRequest.status !== "pending") {
+      return res.status(400).json({ error: "That reset request is not pending" });
+    }
+    target.passwordResetRequest = { status: "denied", requestedAt: target.passwordResetRequest.requestedAt, decidedAt: new Date(), decidedBy: req.user.username };
+    target.passwordResetCodeHash = ""; target.passwordResetExpiresAt = null;
+    await target.save();
+    await createNotification(target._id, {
+      type: "password_reset_denied",
+      title: "Your password reset was not approved",
+      body: "Dolo45 did not approve your password reset request. If this was you, contact Dolo45.",
+      fromUsername: req.user.username,
+      refId: ""
+    });
+    res.json({ success: true, message: "Denied — no reset code was sent." });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Socket.IO Events
+
 // --- Online presence --------------------------------------------------
 // Live "online now" is kept in memory here: userId -> number of open
 // sockets (so two tabs / two devices both count, and a user stays
@@ -1845,7 +2671,7 @@ async function markOffline(socketUser) {
 // Unauthenticated sockets are still allowed (global chat and video
 // rooms worked that way before) — they just get socket.user = null
 // and can never join, read or send in a private chat.
-io.use((socket, next) => {
+io.use(async (socket, next) => {
   const token = socket.handshake?.auth?.token || socket.handshake?.query?.token;
   if (!token) {
     socket.user = null;
@@ -1853,6 +2679,15 @@ io.use((socket, next) => {
   }
   try {
     const decoded = jwt.verify(token, jwtSecret);
+    // Temp 2FA tokens and tokens from before a password reset are
+    // not logins for the socket either.
+    if ((decoded.purpose && decoded.purpose !== "full") || (typeof decoded.tokenVersion === "number")) {
+      const u = await User.findById(decoded.id);
+      if (!u || u.banned || decoded.tokenVersion !== (u.tokenVersion || 0)) { socket.user = null; return next(); }
+    } else {
+      const u = await User.findById(decoded.id);
+      if (!u || u.banned) { socket.user = null; return next(); }
+    }
     socket.user = { id: String(decoded.id), username: decoded.username, role: decoded.role };
     next();
   } catch (err) {
@@ -1925,6 +2760,36 @@ io.on("connection", (socket) => {
       username: senderUsername,
       timestamp: new Date()
     });
+    // Safety monitor — ALERT ONLY, global chat too (Wesley, Nov 16).
+    // Nothing here deletes, blocks, or auto-bans a global message:
+    // it already went out above. A match only stores a flag for
+    // Dolo45 to review and alerts ONLY him — never other admins or
+    // members. Wrapped so a scan failure can never break the chat.
+    try {
+      const gFlags = scanChatMessage(text);
+      if (gFlags.length > 0) {
+        const gSender = senderUsername ? await findUserByUsername(User, senderUsername) : null;
+        await ChatFlag.create({
+          message: null,
+          room: null,
+          roomName: "Global chat",
+          senderId: gSender ? gSender._id : null,
+          senderUsername,
+          text,
+          reasons: gFlags.map((f) => f.label)
+        });
+        const owner = await User.findOne({ username: ADMIN_USERNAME });
+        if (owner && !owner.banned) {
+          await createNotification(owner._id, {
+            type: "safety_flag",
+            title: "Safety alert — global chat needs your review",
+            body: `${senderUsername}: ${gFlags.map((f) => f.label).join(" · ")}`,
+            fromUsername: senderUsername,
+            refId: "global"
+          });
+        }
+      }
+    } catch (err) { /* chat already went out — the flag is a bonus */ }
     // Global chat notification: tell everyone who is online right
     // now (except the sender) — a stored notification plus a live
     // push, the same as every other notification. Offline members
