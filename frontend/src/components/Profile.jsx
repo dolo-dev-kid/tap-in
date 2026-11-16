@@ -2,13 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import axiosInstance from "../api/axios";
 import { uploadFile, mediaUrl } from "../api/upload";
 import MyMerch from "./MyMerch";
+import { DOLO45_IG } from "../data/dolo45Photos";
 
 // Dolo45's profile pic is his real Instagram profile pic
-// (@nho_life_dolo45), shipped as a repo asset. Used ONLY as the
-// fallback for the exact username "Dolo45" (case-sensitive — the
-// separate banned lowercase "dolo45" account never gets it). A saved
-// avatar on his account always wins over this fallback.
-export const DOLO45_AVATAR = "/dolo45-ig.jpg";
+// (@nho_life_dolo45), shipped as a data URI in dolo45Photos.js. Used
+// ONLY as the fallback for the exact username "Dolo45"
+// (case-sensitive — the separate banned lowercase "dolo45" account
+// never gets it). A saved avatar on his account always wins over
+// this fallback.
+export const DOLO45_AVATAR = DOLO45_IG;
 
 // Profile shows the LOGGED-IN user's own data — never a template.
 // Display name is the account username (from localStorage, then from the

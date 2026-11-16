@@ -120,11 +120,12 @@ function requireAdmin(req, res, next) {
 }
 
 // Dolo45's profile pic is his real Instagram profile pic
-// (@nho_life_dolo45), shipped as a frontend asset. Shown ONLY for the
-// exact username "Dolo45" (case-sensitive — the separate banned
-// lowercase "dolo45" account never gets it), and only when the account
-// has no saved avatar of its own. A saved avatar always wins.
-const DOLO45_AVATAR_URL = "https://tap-in-cakt.onrender.com/dolo45-ig.jpg";
+// (@nho_life_dolo45), shipped as a data URI in dolo45Avatar.js. Shown
+// ONLY for the exact username "Dolo45" (case-sensitive — the separate
+// banned lowercase "dolo45" account never gets it), and only when the
+// account has no saved avatar of its own. A saved avatar always wins.
+const { DOLO45_AVATAR_DATA_URI } = require("./dolo45Avatar");
+const DOLO45_AVATAR_URL = DOLO45_AVATAR_DATA_URI;
 function dolo45Avatar(u) {
   if (u && u.username === "Dolo45" && !u.avatar) return DOLO45_AVATAR_URL;
   return u.avatar || "";

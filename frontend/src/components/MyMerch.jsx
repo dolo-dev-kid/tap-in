@@ -1,3 +1,5 @@
+import { DOLO45_IG, DOLO45_BOOTH_1, DOLO45_BOOTH_2 } from "../data/dolo45Photos";
+
 // My Merch — Dolo45's merch showcase.
 // There are NO real merch products, prices or store links yet (checked
 // the whole repo — nothing exists to link to), so nothing is invented
@@ -11,9 +13,9 @@
 // recording in his home booth in Pittsburgh. No generated images,
 // no stock photos, no other people's photos.
 const PHOTOS = [
-  { src: "/dolo45-ig.jpg", alt: "Dolo45 — Instagram profile pic (@nho_life_dolo45)", caption: "Dolo45" },
-  { src: "/dolo45-booth-1.jpg", alt: "Dolo45 recording in his home booth, Pittsburgh", caption: "In the booth — home setup, Pittsburgh" },
-  { src: "/dolo45-booth-2.jpg", alt: "Dolo45 recording in his home booth, Pittsburgh", caption: "In the booth — home setup, Pittsburgh" }
+  { src: DOLO45_IG, alt: "Dolo45 — Instagram profile pic (@nho_life_dolo45)", caption: "Dolo45" },
+  { src: DOLO45_BOOTH_1, alt: "Dolo45 recording in his home booth, Pittsburgh", caption: "In the booth — home setup, Pittsburgh" },
+  { src: DOLO45_BOOTH_2, alt: "Dolo45 recording in his home booth, Pittsburgh", caption: "In the booth — home setup, Pittsburgh" }
 ];
 
 export default function MyMerch() {
@@ -30,7 +32,7 @@ export default function MyMerch() {
     >
       <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
         <img
-          src="/dolo45-ig.jpg"
+          src={DOLO45_IG}
           alt="Dolo45 — Instagram profile pic"
           style={{
             width: 120,
