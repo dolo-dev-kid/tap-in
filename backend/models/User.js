@@ -100,7 +100,10 @@ const UserSchema = new mongoose.Schema({
     tiktok: { type: String, default: "" },
     youtube: { type: String, default: "" },
     soundcloud: { type: String, default: "" },
-    bandlab: { type: String, default: "" }
+    bandlab: { type: String, default: "" },
+    // Discord username or server invite link, pasted by the member
+    // themself (16 Nov 2026). Never seeded, never invented.
+    discord: { type: String, default: "" }
   },
   // Email — the member's own email, used ONLY for email verification
   // and admin two-factor codes. Never shown to other members: it is

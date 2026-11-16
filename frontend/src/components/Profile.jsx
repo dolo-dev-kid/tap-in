@@ -146,7 +146,7 @@ export default function Profile() {
   const [loading, setLoading] = useState(Boolean(userId));
   // My other platforms — the member's own links, pasted by them.
   // Empty by default, never auto-filled.
-  const emptyLinks = () => ({ instagram: "", facebook: "", tiktok: "", youtube: "", soundcloud: "", bandlab: "" });
+  const emptyLinks = () => ({ instagram: "", facebook: "", tiktok: "", youtube: "", soundcloud: "", bandlab: "", discord: "" });
   const [socialLinks, setSocialLinks] = useState(emptyLinks());
   const [socialInput, setSocialInput] = useState(emptyLinks());
   const [referralCode, setReferralCode] = useState("");

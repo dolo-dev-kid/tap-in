@@ -200,12 +200,14 @@ function dolo45Avatar(u) {
   return u.avatar || "";
 }
 
-// Social links — the six platforms Tap In links out to. A value is
+// Social links — the seven platforms Tap In links out to (Discord
+// added 16 Nov 2026, Wesley: "I got Discord as well so I'ma sync my
+// Discord account to my tap in account"). A value is
 // either empty, a plain handle (@name or name, letters/digits/./_/-),
 // or a full http(s) URL. Anything else (javascript:, data:, spaces,
 // over 200 chars) is rejected, never stored. Only the six keys are
 // ever kept — anything else in the body is dropped.
-const SOCIAL_PLATFORMS = ["instagram", "facebook", "tiktok", "youtube", "soundcloud", "bandlab"];
+const SOCIAL_PLATFORMS = ["instagram", "facebook", "tiktok", "youtube", "soundcloud", "bandlab", "discord"];
 function cleanSocialLinks(input) {
   const out = {};
   for (const key of SOCIAL_PLATFORMS) out[key] = "";
@@ -217,6 +219,11 @@ function cleanSocialLinks(input) {
     const v = raw.trim().slice(0, 200);
     if (!v) continue;
     if (/^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(v)) { out[key] = v; continue; }
+    // Discord: a username (new style, 2-32 chars) or a legacy
+    // name#1234, or a server invite link (discord.gg/… — caught by
+    // the URL check above). A Discord username has no public profile
+    // URL, so the frontend shows it as text, not a link.
+    if (key === "discord" && /^@?[A-Za-z0-9._-]{2,32}(#[0-9]{4})?$/.test(v)) { out[key] = v; continue; }
     if (/^@?[A-Za-z0-9._-]{1,64}$/.test(v)) { out[key] = v; continue; }
     throw new Error(`${key} must be a link (https://…) or a handle (@name)`);
   }
@@ -233,6 +240,12 @@ function publicSocialLinks(u) {
   // account has no saved links of its own. A saved link always wins:
   // as soon as any link is saved, the saved set is shown as-is.
   // Links only — no OAuth, no follower import, no auto-posting.
+  // Discord IS seeded for Dolo45 now: Wesley gave his Discord
+  // username "Dolo45" on 16 Nov 2026. Same pattern as his other six:
+  // exact username "Dolo45" only, only when he has no saved links
+  // at all, a saved link always wins, banned lowercase "dolo45"
+  // never gets it. Discord has no profile URL, so the value is the
+  // username itself, shown as "Discord: Dolo45".
   if (u && u.username === "Dolo45" && !SOCIAL_PLATFORMS.some((k) => out[k])) {
     return { ...DOLO45_SOCIAL_LINKS };
   }
@@ -246,7 +259,9 @@ const DOLO45_SOCIAL_LINKS = {
   tiktok: "@dolo45_music",
   youtube: "https://www.youtube.com/@Dolo45-ent",
   soundcloud: "https://soundcloud.com/dolo45",
-  bandlab: "pgh_dolo45"
+  bandlab: "pgh_dolo45",
+  // Wesley's Discord username, given by him 16 Nov 2026.
+  discord: "Dolo45"
 };
 
 // --- Email (verification + admin 2FA + password reset) --------------
