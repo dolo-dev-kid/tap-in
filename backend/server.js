@@ -1479,6 +1479,56 @@ function emitPresenceTo(userIds, payload) {
   }
 }
 
+// Auto-friend on online (Wesley's rule, Nov 15): when a member comes
+// online, they automatically become a friend of Dolo45 (exact username,
+// the owner) and Dolo45 becomes a friend of theirs — mutual, no
+// Accept/Decline needed for this auto-add. Scope is deliberately
+// narrow: ONLY Dolo45 gets auto-friended, never member-to-member.
+// Skips: Dolo45 himself, banned users (including the separate banned
+// lowercase "dolo45" account — exact-match only, never a case-variant
+// of the owner name), and anyone already friends both ways (no
+// duplicates, no duplicate request entries). Any stale pending
+// requests between the two are cleared so they don't linger in the
+// Friends tab. The owner gets one "friend_accepted" alert so the bell
+// lights up. Never throws — callers wrap it, and it must never break
+// a socket connection.
+async function autoFriendWithOwner(socketUser) {
+  if (!ADMIN_USERNAME) return;
+  if (!socketUser || !socketUser.id || !socketUser.username) return;
+  // The owner coming online is not auto-friended to himself.
+  if (socketUser.username === ADMIN_USERNAME) return;
+  // Never touch a case/whitespace variant of the owner name (the
+  // banned lowercase "dolo45" is a separate account).
+  if (sameUsername(socketUser.username, ADMIN_USERNAME)) return;
+  const owner = await User.findOne({ username: ADMIN_USERNAME });
+  if (!owner || owner.banned) return;
+  const user = await User.findById(socketUser.id);
+  if (!user || user.banned) return;
+  const ownerHasThem = (owner.friends || []).some((f) => sameUsername(f, user.username));
+  const theyHaveOwner = (user.friends || []).some((f) => sameUsername(f, owner.username));
+  if (ownerHasThem && theyHaveOwner) {
+    // Already mutual friends: just clear any stale pending requests
+    // between them so the Friends tab stays clean.
+    let changed = false;
+    if (hasFriendRequest(owner, user.username)) { removeFriendRequest(owner, user.username); changed = true; }
+    if (hasFriendRequest(user, owner.username)) { removeFriendRequest(user, owner.username); changed = true; }
+    if (changed) { await owner.save(); await user.save(); }
+    return;
+  }
+  removeFriendRequest(owner, user.username);
+  removeFriendRequest(user, owner.username);
+  addFriendBothWays(owner, user);
+  await owner.save();
+  await user.save();
+  await createNotification(owner._id, {
+    type: "friend_accepted",
+    title: `${user.username} is now your friend`,
+    body: `${user.username} came online and was added as your friend automatically.`,
+    fromUsername: user.username,
+    refId: user.username
+  });
+}
+
 async function markOnline(socketUser) {
   const uid = String(socketUser.id);
   onlineSocketCounts.set(uid, (onlineSocketCounts.get(uid) || 0) + 1);
@@ -1487,6 +1537,13 @@ async function markOnline(socketUser) {
   if (!userSockets.has(uid)) userSockets.set(uid, new Set());
   userSockets.get(uid).add(socketUser.socketId);
   if (!wasOnline) {
+    // Wesley's rule (Nov 15): when someone comes online, they
+    // automatically become a friend of Dolo45 (the owner) and Dolo45
+    // becomes a friend of theirs — mutual, no Accept/Decline tap
+    // needed. Only Dolo45 gets auto-friended this way; nobody is
+    // auto-friended to anyone else. Runs once per online transition
+    // (first socket), never per tab, and never breaks the connection.
+    try { await autoFriendWithOwner(socketUser); } catch (err) { /* presence must never break the connection */ }
     try { await User.updateOne({ _id: uid }, { $set: { lastSeenAt: new Date() } }); } catch (err) { /* ignore */ }
     const recipients = await presenceRecipients(uid);
     emitPresenceTo(recipients, { userId: uid, username: socketUser.username, online: true, lastSeenAt: new Date() });
