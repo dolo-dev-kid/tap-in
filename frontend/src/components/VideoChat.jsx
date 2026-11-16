@@ -15,6 +15,7 @@ export default function VideoChat({ initialRoom }) {
   const [joined, setJoined] = useState(false);
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState("");
+  const [broadcastStatus, setBroadcastStatus] = useState(null);
 
   // Tapping a "just went live" notification opens this page with the
   // broadcaster's room already filled in — one tap on Join and
@@ -65,6 +66,11 @@ export default function VideoChat({ initialRoom }) {
     socket.on("answer", onAnswer);
     socket.on("ice-candidate", onIce);
     socket.on("user-left", onUserLeft);
+    // Owner auto-broadcast status: when Dolo45 goes live, the server
+    // sends where the stream should be pushing out to (enabled
+    // destinations) and what it auto-posted (Feed + DMs).
+    const onBroadcastStatus = (data) => setBroadcastStatus(data);
+    socket.on("broadcast-status", onBroadcastStatus);
 
     // Clean up on unmount (React StrictMode mounts twice in dev — without
     // this every handler ran twice and offers were sent twice).
@@ -75,6 +81,7 @@ export default function VideoChat({ initialRoom }) {
       socket.off("answer", onAnswer);
       socket.off("ice-candidate", onIce);
       socket.off("user-left", onUserLeft);
+      socket.off("broadcast-status", onBroadcastStatus);
       // Leaving the page while live ends the broadcast.
       socket.emit("stop-live");
     };
@@ -149,6 +156,7 @@ export default function VideoChat({ initialRoom }) {
     localStream.current = null;
     if (localVideo.current) localVideo.current.srcObject = null;
     if (videoContainer.current) videoContainer.current.innerHTML = "";
+    setBroadcastStatus(null);
     setJoined(false);
     setError("");
   };
@@ -255,6 +263,17 @@ export default function VideoChat({ initialRoom }) {
       ) : (
         <>
           <h3 style={{ marginTop: 20 }}>Video Room: {room}</h3>
+          {broadcastStatus && (
+            <div style={{ marginTop: 12, background: "#1e1f22", border: "2px solid #ff4444", padding: 14, borderRadius: 12, fontSize: 14, lineHeight: 1.6, maxWidth: 560 }}>
+              🔴 <strong>You're live — auto-broadcast on</strong>
+              <span style={{ display: "block", color: "#ddd" }}>
+                Broadcasting to: {broadcastStatus.destinations?.length ? broadcastStatus.destinations.join(", ") : "no destinations on — save Restream in Stream Destinations and start your OBS feed to push video out"}
+              </span>
+              <span style={{ display: "block", color: "#aaa" }}>
+                {broadcastStatus.feedPosted ? "Feed post ✅" : "Feed post already up"} · DMs to {broadcastStatus.dmCount} member{broadcastStatus.dmCount === 1 ? "" : "s"} — Tap In posts the announcement; the video push-out comes from OBS/Restream.
+              </span>
+            </div>
+          )}
           <p style={{ marginTop: 6, color: "#aaa", fontSize: 14 }}>
             Tell a friend to open Tap-In and join room “{room}”.
           </p>

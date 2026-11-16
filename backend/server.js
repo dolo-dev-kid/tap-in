@@ -1226,21 +1226,51 @@ app.post("/auth/reset-password", requireDb, async (req, res) => {
 // Tap In does NOT restream by itself — its video rooms are WebRTC.
 // To actually go live elsewhere, the streamer copies these into
 // OBS multistream (or Restream) and starts streaming there, while
-// also going live in Tap In. See STREAMING.md. Nothing
-// auto-broadcasts anywhere: a destination only matters when the
-// streamer turns it on AND starts their own OBS/Restream feed.
+// also going live in Tap In. See STREAMING.md. What DOES auto-happen
+// when the OWNER (exact Dolo45) goes live — see announceOwnerGoLive
+// below — is the in-app part: a Feed post + a DM to every member +
+// the "just went live" alerts. The video push-out to YouTube /
+// Facebook / Twitch / TikTok / Instagram still needs OBS pointed at
+// one of these destinations (Restream is the one-key way) — Tap In
+// cannot push RTMP, and it never pretends to.
 const STREAM_PLATFORMS = {
   youtube: "rtmp://a.rtmp.youtube.com/live2",
   facebook: "rtmps://live-upload.facebook.com:443/rtmp/",
   twitch: "rtmp://live.twitch.tv/app",
   tiktok: "",
-  instagram: "rtmps://live-upload.instagram.com:443/rtmp/"
+  instagram: "rtmps://live-upload.instagram.com:443/rtmp/",
+  // Restream.io: ONE ingest URL + key in OBS, Restream pushes it out
+  // to every platform Wesley connected there (YouTube, Facebook,
+  // Twitch, TikTok, Instagram). This is the honest one-key path for
+  // auto-broadcast — Tap In itself cannot push RTMP (WebRTC only).
+  restream: "rtmp://live.restream.io/live"
 };
 function publicDestination(d) {
   return { platform: d.platform, rtmpUrl: d.rtmpUrl || "", enabled: Boolean(d.enabled), hasKey: Boolean(d.keyEnc), keyLast4: d.keyLast4 || "", updatedAt: d.updatedAt || null };
 }
 app.get("/stream/destinations", requireDb, requireAuth, async (req, res) => {
   res.json({ success: true, destinations: (req.user.streamDestinations || []).map(publicDestination) });
+});
+
+// GET /stream/broadcast-status — MY live broadcast, if I am live:
+// room, startedAt, my enabled destinations (platform names only,
+// never keys), and what the auto-broadcast did (Feed post + DMs).
+// Only my own broadcast is ever returned; nobody else's destinations
+// are exposed here.
+app.get("/stream/broadcast-status", requireDb, requireAuth, async (req, res) => {
+  const mine = [...liveBroadcasts.values()].find((b) => String(b.userId) === String(req.user._id));
+  if (!mine) return res.json({ success: true, live: false });
+  const destinations = (req.user.streamDestinations || [])
+    .filter((d) => d.enabled && d.keyEnc)
+    .map((d) => d.platform);
+  res.json({
+    success: true,
+    live: true,
+    room: mine.room,
+    startedAt: mine.startedAt,
+    destinations,
+    autoBroadcast: mine.autoBroadcast || null
+  });
 });
 app.post("/stream/destinations", requireDb, requireAuth, async (req, res) => {
   try {
@@ -1249,7 +1279,7 @@ app.post("/stream/destinations", requireDb, requireAuth, async (req, res) => {
     const streamKey = typeof req.body?.streamKey === "string" ? req.body.streamKey.trim() : "";
     const enabled = req.body?.enabled === true;
     if (!Object.keys(STREAM_PLATFORMS).includes(platform)) {
-      return res.status(400).json({ error: "Platform must be youtube, facebook, twitch, tiktok or instagram" });
+      return res.status(400).json({ error: "Platform must be youtube, facebook, twitch, tiktok, instagram or restream" });
     }
     if (rtmpUrl && !/^rtmps?:\/\/[^\s]+$/.test(rtmpUrl)) {
       return res.status(400).json({ error: "Stream URL must start with rtmp:// or rtmps://" });
@@ -2832,6 +2862,73 @@ io.on("connection", (socket) => {
     } catch (err) { /* chat already went out — notifications are a bonus */ }
   });
 
+  // --- Owner auto-broadcast on Go Live ------------------------------
+  // When the OWNER (exact username Dolo45, ADMIN_USERNAME — never a
+  // case/whitespace variant, never the banned lowercase dolo45) goes
+  // live, Tap In automatically does the in-app broadcast that is
+  // actually possible from inside Tap In:
+  //   (a) a Feed post with the go-live text (members see it in Feed),
+  //   (b) a 1-to-1 DM with the same text to every non-banned member
+  //       (one DM thread per pair, reusing savePrivateMessage, so the
+  //       member also gets a message alert — the same text Wesley
+  //       sent to everyone on 16 Nov 2026 when he went live).
+  // It does NOT post to Facebook / Instagram / TikTok / YouTube /
+  // Twitch from the backend: Tap In holds no posting credentials
+  // for those platforms and has no API path to do it — claiming it
+  // did would be fake. The video push-out is the streamer's OBS /
+  // Restream feed (see STREAMING.md); this helper reports which
+  // destinations are enabled + keyed so the owner sees, in-app,
+  // where OBS/Restream should be pushing to.
+  // Guard: a Feed post / DM with this exact text in the last 10
+  // minutes is not repeated, so a reconnect / double tap on Go Live
+  // never spams the Feed or anyone's DMs twice.
+  const GO_LIVE_TEXT = "🔴 I'M LIVE on Tap In right now! Time to tap in! 🔥 Live stream, chat, video rooms — come tap in with me now. It's free for life if you sign up while it's free. Tap in. Stay tapped in. — Dolo45";
+  async function announceOwnerGoLive(owner, broadcast) {
+    if (!isOwnerUsername(owner.username)) return null;
+    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
+    const destinations = (owner.streamDestinations || [])
+      .filter((d) => d.enabled && d.keyEnc)
+      .map((d) => d.platform);
+    let feedPosted = false;
+    try {
+      const recentPost = await Post.findOne({
+        userId: owner._id, text: GO_LIVE_TEXT, createdAt: { $gt: tenMinAgo }
+      });
+      if (!recentPost) {
+        await Post.create({ userId: owner._id, username: owner.username, text: GO_LIVE_TEXT });
+        feedPosted = true;
+      }
+    } catch (err) { /* Feed post is a bonus — live still started */ }
+    let dmCount = 0;
+    try {
+      const members = await User.find({ banned: { $ne: true } }).select("_id username");
+      for (const member of members) {
+        if (String(member._id) === String(owner._id)) continue;
+        try {
+          const ids = [String(owner._id), String(member._id)].sort();
+          const dmKey = ids.join("_");
+          let room = await ChatRoom.findOne({ dmKey });
+          if (!room) {
+            room = await ChatRoom.create({
+              type: "dm", dmKey,
+              members: [owner._id, member._id],
+              memberUsernames: [owner.username, member.username],
+              createdBy: owner._id
+            });
+          }
+          const recentDm = await ChatMessage.findOne({
+            room: room._id, senderId: owner._id, text: GO_LIVE_TEXT,
+            createdAt: { $gt: tenMinAgo }
+          });
+          if (recentDm) continue;
+          await savePrivateMessage(room, owner, GO_LIVE_TEXT);
+          dmCount++;
+        } catch (err) { /* one failed DM must not stop the rest */ }
+      }
+    } catch (err) { /* DMs are a bonus — live still started */ }
+    return { destinations, feedPosted, dmCount, room: broadcast.room, startedAt: broadcast.startedAt };
+  }
+
   // --- Going live -----------------------------------------------------
   // "Go Live" is joining a video room with the camera on. The client
   // emits "go-live" with the room name when the camera starts, and
@@ -2850,7 +2947,30 @@ io.on("connection", (socket) => {
       startedAt: new Date()
     };
     liveBroadcasts.set(key, broadcast);
-    io.emit("live-started", { username: broadcast.username, room: broadcast.room, startedAt: broadcast.startedAt });
+    // Owner auto-broadcast: Feed post + DM to every member (owner
+    // only, exact Dolo45). Runs in the background — the live stream
+    // itself never waits on it, and a failure here never stops it.
+    try {
+      const ownerUser = await User.findById(socket.user.id);
+      if (ownerUser) {
+        const auto = await announceOwnerGoLive(ownerUser, broadcast);
+        if (auto) {
+          broadcast.autoBroadcast = auto;
+          socket.emit("broadcast-status", {
+            live: true, room: broadcast.room, startedAt: broadcast.startedAt,
+            destinations: auto.destinations, feedPosted: auto.feedPosted, dmCount: auto.dmCount
+          });
+        }
+      }
+    } catch (err) { /* auto-broadcast is a bonus — live still started */ }
+    io.emit("live-started", {
+      username: broadcast.username, room: broadcast.room, startedAt: broadcast.startedAt,
+      autoBroadcast: broadcast.autoBroadcast ? {
+        destinations: broadcast.autoBroadcast.destinations,
+        feedPosted: broadcast.autoBroadcast.feedPosted,
+        dmCount: broadcast.autoBroadcast.dmCount
+      } : null
+    });
     try {
       const everyone = await User.find({}).select("_id");
       for (const u of everyone) {

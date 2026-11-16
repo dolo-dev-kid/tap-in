@@ -13,7 +13,11 @@ const PLATFORMS = [
   { key: "facebook", label: "Facebook", preset: "rtmps://live-upload.facebook.com:443/rtmp/" },
   { key: "twitch", label: "Twitch", preset: "rtmp://live.twitch.tv/app" },
   { key: "tiktok", label: "TikTok", preset: "" },
-  { key: "instagram", label: "Instagram", preset: "rtmps://live-upload.instagram.com:443/rtmp/" }
+  { key: "instagram", label: "Instagram", preset: "rtmps://live-upload.instagram.com:443/rtmp/" },
+  // Restream.io — ONE ingest URL + key in OBS, Restream pushes it out
+  // to every platform you connected there. This is the one-key way
+  // to broadcast out to all platforms at once.
+  { key: "restream", label: "Restream (all platforms at once)", preset: "rtmp://live.restream.io/live" }
 ];
 
 function authHeaders() {
@@ -68,11 +72,21 @@ export default function StreamDestinations() {
     <div style={{ marginTop: 20, background: "#1e1f22", padding: 20, borderRadius: 12 }}>
       <h2>📡 Broadcast out — Stream destinations</h2>
       <p style={{ marginTop: 8, color: "#aaa", fontSize: 14 }}>
-        Save where your stream should go OUT to — YouTube, Facebook, Twitch, TikTok, Instagram.
+        Save where your stream should go OUT to — YouTube, Facebook, Twitch, TikTok, Instagram,
+        or Restream (all of them at once, with one key).
         Tap In does not restream by itself: copy these into OBS multistream or Restream and start
         streaming there, while you Go Live in Tap In too. Your stream key is encrypted and never
         shown in full — not even to you after you save it.
       </p>
+      <div style={{ marginTop: 12, background: "#2b2d31", padding: 14, borderRadius: 8, fontSize: 13, color: "#ddd", lineHeight: 1.6 }}>
+        <strong>📡 How to broadcast out to all platforms when you Go Live (one-time setup):</strong>
+        <ol style={{ margin: "8px 0 0 18px" }}>
+          <li>Create a free Restream.io account and connect your YouTube, Facebook, Twitch, TikTok and Instagram accounts there.</li>
+          <li>In Restream, copy your RTMP URL + stream key, save it here as the “Restream” destination, and paste the same URL + key into OBS Studio (free) → Settings → Stream → Custom.</li>
+          <li>Start streaming in OBS, then tap Go Live in Tap In. OBS/Restream pushes your video out to every platform, Tap In posts the go-live announcement to the Feed and DMs every member for you.</li>
+        </ol>
+        <span style={{ color: "#aaa" }}>Tap In can’t push video to other platforms by itself — its rooms are WebRTC. Restream/OBS is the real push-out, and no stream key is ever shown or stored in plain text here.</span>
+      </div>
       {destinations.length === 0 ? (
         <p style={{ marginTop: 12, color: "#aaa", fontSize: 14 }}>No destinations saved yet.</p>
       ) : (

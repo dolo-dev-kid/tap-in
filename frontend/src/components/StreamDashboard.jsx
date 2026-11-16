@@ -31,6 +31,7 @@ export default function StreamDashboard({ onNavigate }) {
   const [loading, setLoading] = useState(true);
   const [note, setNote] = useState("");
   const [stopping, setStopping] = useState(false);
+  const [broadcast, setBroadcast] = useState(null);
   const myUsername =
     typeof localStorage !== "undefined" ? localStorage.getItem("tapin_username") : null;
 
@@ -38,11 +39,13 @@ export default function StreamDashboard({ onNavigate }) {
     const token = localStorage.getItem("token");
     if (!token) { setLoading(false); return; }
     try {
-      const [liveRes, notifRes] = await Promise.all([
+      const [liveRes, notifRes, broadcastRes] = await Promise.all([
         axiosInstance.get("/live", { headers: authHeaders() }),
-        axiosInstance.get("/notifications", { headers: authHeaders() })
+        axiosInstance.get("/notifications", { headers: authHeaders() }),
+        axiosInstance.get("/stream/broadcast-status", { headers: authHeaders() }).catch(() => null)
       ]);
       setLive(liveRes.data?.live || []);
+      setBroadcast(broadcastRes?.data?.live ? broadcastRes.data : null);
       setAlerts((notifRes.data?.notifications || []).filter((n) =>
         ["live", "friend_accepted", "friend_online", "member_joined"].includes(n.type)
       ));
@@ -136,6 +139,22 @@ export default function StreamDashboard({ onNavigate }) {
               <span style={{ alignSelf: "center", color: "#7CFC9A", fontWeight: "bold" }}>
                 ● You're live{myLive ? ` in “${myLive.room}”` : ""} — {myLive ? durationSince(myLive.startedAt) : ""}
               </span>
+              {broadcast && (
+                <div style={{ width: "100%", background: "#2b2d31", padding: 12, borderRadius: 8, fontSize: 13, color: "#ddd", lineHeight: 1.6 }}>
+                  📡 <strong>Broadcasting to:</strong>{" "}
+                  {broadcast.destinations?.length
+                    ? broadcast.destinations.join(", ")
+                    : "no destinations on — save one below (Restream is the one-key way to hit all platforms) and start your OBS/Restream feed"}
+                  {broadcast.autoBroadcast && (
+                    <span style={{ display: "block", color: "#aaa" }}>
+                      Auto-posted on Go Live: {broadcast.autoBroadcast.feedPosted ? "Feed post ✅" : "Feed post already up"} · DMs to {broadcast.autoBroadcast.dmCount} member{broadcast.autoBroadcast.dmCount === 1 ? "" : "s"}
+                    </span>
+                  )}
+                  <span style={{ display: "block", color: "#aaa" }}>
+                    Tap In posts the announcement for you — the video push-out itself comes from your OBS/Restream feed, not from Tap In.
+                  </span>
+                </div>
+              )}
               <button
                 onClick={stopLive}
                 disabled={stopping}
