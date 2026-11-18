@@ -4,11 +4,20 @@ import axiosInstance from "../api/axios";
 import VerifiedBadge from "./VerifiedBadge";
 
 // Live group chat over the backend's Socket.IO "chat-message" events
-// (room "global"). Before this fix chat was local-only: a message only
-// ever appeared on the sender's own screen.
-// The global room is UNCHANGED by the private-chat work below — same
-// socket, same events, same behaviour.
-const socket = io(import.meta.env.VITE_API_URL || "http://localhost:3001");
+// (room "global"). Global messages are SAVED in MongoDB now
+// (GlobalChatMessage, last 100 — after 100 the oldest is deleted as
+// new ones come in; that is the only global-chat deletion) and loaded
+// as history on mount. The socket carries the login JWT (same as the
+// private-chat socket), so the sender always comes from the authed
+// socket — nobody can send global chat as someone else.
+const socket = io(import.meta.env.VITE_API_URL || "http://localhost:3001", {
+  auth: {
+    token:
+      typeof localStorage !== "undefined"
+        ? localStorage.getItem("token") || ""
+        : ""
+  }
+});
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:3001";
 
@@ -30,7 +39,15 @@ export default function ChatPanel() {
     { text: "Welcome to chat — everyone in the global room sees messages here." }
   ]);
   const [input, setInput] = useState("");
+  const [globalError, setGlobalError] = useState("");
   const [live, setLive] = useState(false);
+  // The global socket is created once at module load, when the login
+  // token may not exist yet (or may have changed after a login on
+  // the same page). Remember which token the socket last connected
+  // with, so a login can re-auth it without a page reload.
+  const globalAuthTokenRef = useRef(
+    typeof localStorage !== "undefined" ? localStorage.getItem("token") || "" : ""
+  );
   const username =
     typeof localStorage !== "undefined"
       ? localStorage.getItem("tapin_username")
@@ -167,30 +184,102 @@ export default function ChatPanel() {
     return () => window.removeEventListener("tapin:focus-chat-search", focusSearch);
   }, []);
 
-  // Global room listeners (unchanged).
+  // Global room listeners + history.
+  // - History: the last 100 saved global messages load on mount
+  //   (GET /chat/global/messages); the welcome line stays only when
+  //   there is no history yet or the fetch fails.
+  // - Rejoin: "global" is (re-)joined on EVERY connect, not just on
+  //   mount — after a socket reconnect the user used to look Live
+  //   but receive nothing until a page reload.
+  // - Dedupe: live messages carry the saved message id, so the
+  //   sender's own message is appended once when the broadcast
+  //   comes back (no optimistic append in send() any more — the
+  //   private chats already dedupe this way). The displayed list
+  //   is capped at the last 100, matching the server cap.
   useEffect(() => {
-    socket.emit("join-room", "global");
+    const joinGlobal = () => socket.emit("join-room", "global");
 
-    const onChat = (data) => {
-      setMessages((prev) => [
-        ...prev,
-        { text: data.message, from: data.from, at: data.timestamp }
-      ]);
+    const appendGlobal = (data) => {
+      if (!data) return;
+      const text = data.senderUsername
+        ? `${data.senderUsername}: ${data.text ?? data.message ?? ""}`
+        : data.message ?? data.text ?? "";
+      if (!String(text).trim()) return;
+      const incoming = {
+        id: data.id || null,
+        text,
+        from: data.senderUsername || data.username || data.from || null,
+        at: data.createdAt || data.timestamp || null,
+        mine: data.senderUsername ? data.senderUsername === username : false
+      };
+      setMessages((prev) => {
+        if (incoming.id && prev.some((m) => m.id && String(m.id) === String(incoming.id))) return prev;
+        return [...prev, incoming].slice(-100);
+      });
     };
-    const onConnect = () => setLive(true);
+
+    const onChat = (data) => appendGlobal(data);
+    const onConnect = () => {
+      setLive(true);
+      joinGlobal();
+    };
     const onDisconnect = () => setLive(false);
+    const onChatError = (data) => {
+      if (data?.error) setGlobalError(data.error);
+    };
+
+    // Load history first (logged-in only — the endpoint is authed).
+    if (loggedIn) {
+      axiosInstance
+        .get("/chat/global/messages", { headers: authHeaders() })
+        .then((res) => {
+          const history = (res.data?.messages || []).map((m) => ({
+            id: m.id,
+            text: m.senderUsername ? `${m.senderUsername}: ${m.text}` : m.text,
+            from: m.senderUsername,
+            at: m.createdAt,
+            mine: m.senderUsername === username
+          }));
+          if (history.length) setMessages(history.slice(-100));
+        })
+        .catch(() => { /* live chat still works without history */ });
+    }
 
     socket.on("chat-message", onChat);
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
-    if (socket.connected) setLive(true);
+    socket.on("chat-error", onChatError);
+    if (socket.connected) {
+      setLive(true);
+      joinGlobal();
+    }
 
     return () => {
       socket.off("chat-message", onChat);
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
+      socket.off("chat-error", onChatError);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Re-auth the global socket if the login token changed after the
+  // socket was created (login on the same page, no reload): update
+  // its auth and reconnect once, so the server sees the logged-in
+  // user as the sender. Runs only when the token actually differs.
+  useEffect(() => {
+    if (!loggedIn) return undefined;
+    const token = localStorage.getItem("token") || "";
+    if (!token || token === globalAuthTokenRef.current) return undefined;
+    globalAuthTokenRef.current = token;
+    socket.auth = { token };
+    if (socket.connected) {
+      socket.disconnect();
+      socket.connect();
+    }
+    return undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loggedIn]);
 
   // Private-chat socket: JWT-authenticated, so the backend knows who
   // you are and only lets you into rooms you're a member of.
@@ -254,10 +343,16 @@ export default function ChatPanel() {
 
   const send = () => {
     if (!input.trim()) return;
-    const text = username ? `${username}: ${input.trim()}` : input.trim();
-    // Show it immediately, and send it to everyone in the room.
-    setMessages((prev) => [...prev, { text, mine: true }]);
-    socket.emit("chat-message", { room: "global", message: text, username });
+    if (!loggedIn) {
+      setGlobalError("Log in to send in global chat");
+      return;
+    }
+    setGlobalError("");
+    // No optimistic append and no "username: " prefix here — the
+    // server saves the message (sender from the authed socket) and
+    // broadcasts it back with its id, and the listener above appends
+    // it once. That is what used to double-post own messages.
+    socket.emit("chat-message", { room: "global", message: input.trim() });
     setInput("");
   };
 
@@ -420,9 +515,18 @@ export default function ChatPanel() {
               : "● Not connected to live chat — check the backend, messages stay on this screen"}
           </p>
           <p style={{ marginTop: 6, color: "#aaa", fontSize: 13 }}>
-            Global chat is never auto-deleted, auto-blocked, or auto-banned — if something malicious
-            shows up, only Dolo45 gets an alert to review it.
+            Global chat keeps the last 100 messages — after 100, the
+            oldest is deleted as new ones come in. That is the only
+            deletion: nothing else is ever auto-deleted, auto-blocked,
+            or auto-banned — if something malicious shows up, only
+            Dolo45 gets an alert to review it.
           </p>
+
+          {globalError && (
+            <p style={{ marginTop: 12, color: "#ff6b6b", background: "#3a1a1a", padding: 12, borderRadius: 8 }}>
+              {globalError}
+            </p>
+          )}
 
           <div
             ref={boxRef}
@@ -437,7 +541,7 @@ export default function ChatPanel() {
             }}
           >
             {messages.map((m, i) => (
-              <div key={i} style={{ marginBottom: 10 }}>
+              <div key={m.id || `welcome-${i}`} style={{ marginBottom: 10 }}>
                 {m.text}
               </div>
             ))}

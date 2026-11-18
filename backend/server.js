@@ -15,6 +15,7 @@ const Post = require("./models/Post");
 const Upload = require("./models/Upload");
 const ChatRoom = require("./models/ChatRoom");
 const ChatMessage = require("./models/ChatMessage");
+const GlobalChatMessage = require("./models/GlobalChatMessage");
 const ChatFlag = require("./models/ChatFlag");
 const Notification = require("./models/Notification");
 const { scanChatMessage } = require("./chatFlags");
@@ -1781,6 +1782,63 @@ app.get("/chat/presence", requireDb, requireAuth, async (req, res) => {
   }
 });
 
+// --- Global chat history (Wesley, 18 Nov 2026) ---------------------
+// Global chat used to be broadcast-only: nothing was saved, so every
+// message vanished on reload / disconnect / Render spin-down. Now
+// every global message is saved to MongoDB (GlobalChatMessage) BEFORE
+// it is broadcast, same order as private chat.
+//
+// THE CAP — Wesley's rule, 18 Nov 2026: global chat holds the LAST
+// 100 messages. After 100, the OLDEST message is deleted as new ones
+// come in. That is the ONLY deletion allowed for global chat — never
+// erase global chat otherwise. There is NO TTL on the model, NO
+// delete endpoint for global messages, and NO other auto-trim.
+// trimGlobalChat is the single place that deletes a global message,
+// and it only ever deletes the oldest ones, only to bring the count
+// back down to 100.
+const GLOBAL_CHAT_LIMIT = 100;
+
+function publicGlobalMessage(m) {
+  return {
+    id: String(m._id),
+    senderId: m.senderId ? String(m.senderId) : null,
+    senderUsername: m.senderUsername,
+    text: m.text,
+    flagged: Boolean(m.flagged),
+    flagReasons: m.flagReasons || [],
+    createdAt: m.createdAt
+  };
+}
+
+async function trimGlobalChat() {
+  const count = await GlobalChatMessage.countDocuments({});
+  const excess = count - GLOBAL_CHAT_LIMIT;
+  if (excess <= 0) return 0;
+  // Oldest first (createdAt, then _id to break same-millisecond ties).
+  const oldest = await GlobalChatMessage.find({})
+    .sort({ createdAt: 1, _id: 1 })
+    .limit(excess)
+    .select("_id");
+  if (!oldest.length) return 0;
+  const res = await GlobalChatMessage.deleteMany({ _id: { $in: oldest.map((m) => m._id) } });
+  return res.deletedCount || 0;
+}
+
+// GET /chat/global/messages — the last 100 global messages,
+// oldest first. Logged-in members only. No delete route exists for
+// these messages anywhere in the server.
+app.get("/chat/global/messages", requireDb, requireAuth, async (req, res) => {
+  try {
+    const newestFirst = await GlobalChatMessage.find({})
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(GLOBAL_CHAT_LIMIT);
+    const messages = newestFirst.reverse().map(publicGlobalMessage);
+    res.json({ success: true, messages, limit: GLOBAL_CHAT_LIMIT });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /chat/rooms — rooms the logged-in user belongs to, newest first.
 // GET /chat/search?q= — search MY private chats and groups by
 // username or message text. Only rooms I'm a member of are ever
@@ -2819,32 +2877,68 @@ io.on("connection", (socket) => {
     // old open event — they use join-chat-room / private-chat-message
     // with membership checks. Anything else is ignored.
     if (!data || data.room !== "global") return;
-    const text = typeof data.message === "string" ? data.message : "";
-    // The sender's username comes from the authed socket when there
-    // is one, otherwise from the message itself (the global socket
-    // was anonymous before this — messages didn't even say who sent
-    // them). Include it in the broadcast so the room can see it.
-    const senderUsername = socket.user?.username || (typeof data.username === "string" ? data.username.trim() : "") || "";
+    const text = typeof data.message === "string" ? data.message.trim() : "";
+    if (!text || text.length > 1000) {
+      socket.emit("chat-error", { error: "Messages must be 1–1000 characters" });
+      return;
+    }
+    // The sender comes ONLY from the authed socket (socket.user) —
+    // never from a client-supplied username, so nobody can send
+    // global chat as someone else. The global socket carries the
+    // login JWT (see ChatPanel.jsx, same as the private-chat socket);
+    // a socket with no login cannot send. Receiving still works
+    // without a login — the room is read by members who are logged
+    // in, and history is fetched over the authed HTTP endpoint.
+    if (!socket.user) {
+      socket.emit("chat-error", { error: "Log in to send in global chat" });
+      return;
+    }
+    const senderUsername = socket.user.username;
+    const senderId = socket.user.id;
+    // Save BEFORE broadcast, same order as private chat — and trim
+    // to Wesley's 100-message cap (oldest deleted as new ones come
+    // in; that is the ONLY global-chat deletion). If the save fails
+    // the message is NOT broadcast, so nobody sees a message that
+    // isn't in history.
+    let saved;
+    try {
+      const flags = scanChatMessage(text);
+      saved = await GlobalChatMessage.create({
+        senderId,
+        senderUsername,
+        text,
+        flagged: flags.length > 0,
+        flagReasons: flags.map((f) => f.label)
+      });
+      await trimGlobalChat();
+    } catch (err) {
+      socket.emit("chat-error", { error: "Could not send that message — try again" });
+      return;
+    }
     io.to(data.room).emit("chat-message", {
+      ...publicGlobalMessage(saved),
+      // Legacy fields, for any client still reading the old shape.
       message: text,
-      from: socket.id,
       username: senderUsername,
-      timestamp: new Date()
+      from: socket.id,
+      timestamp: saved.createdAt
     });
     // Safety monitor — ALERT ONLY, global chat too (Wesley, Nov 16).
     // Nothing here deletes, blocks, or auto-bans a global message:
     // it already went out above. A match only stores a flag for
     // Dolo45 to review and alerts ONLY him — never other admins or
     // members. Wrapped so a scan failure can never break the chat.
+    // (The flag's `message` stays null: ChatFlag.message points at
+    // the private ChatMessage model, so it cannot reference a global
+    // message document — the flag still carries the sender + text.)
     try {
       const gFlags = scanChatMessage(text);
       if (gFlags.length > 0) {
-        const gSender = senderUsername ? await findUserByUsername(User, senderUsername) : null;
         await ChatFlag.create({
           message: null,
           room: null,
           roomName: "Global chat",
-          senderId: gSender ? gSender._id : null,
+          senderId: senderId,
           senderUsername,
           text,
           reasons: gFlags.map((f) => f.label)
@@ -2865,11 +2959,9 @@ io.on("connection", (socket) => {
     // now (except the sender) — a stored notification plus a live
     // push, the same as every other notification. Offline members
     // are NOT spammed with every global message.
-    if (!text.trim() || !senderUsername) return;
     try {
-      const sender = await findUserByUsername(User, senderUsername);
       for (const onlineId of [...onlineUserIds]) {
-        if (sender && onlineId === String(sender._id)) continue;
+        if (onlineId === String(senderId)) continue;
         await createNotification(onlineId, {
           type: "message",
           title: "Global chat",

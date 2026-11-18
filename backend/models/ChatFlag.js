@@ -6,8 +6,9 @@ const mongoose = require("mongoose");
 // one. Only the owner can list flags or mark one reviewed, and only
 // he is alerted. Flags live in MongoDB with everything else, so
 // they survive a Render restart. A global-chat flag has no room or
-// message document (global chat is broadcast, not stored), so both
-// are optional; its roomName is "Global chat".
+// message document (global messages live in GlobalChatMessage, not
+// ChatMessage, so this ref cannot point at one), so both are
+// optional; its roomName is "Global chat".
 const ChatFlagSchema = new mongoose.Schema({
   message: {
     type: mongoose.Schema.Types.ObjectId,
