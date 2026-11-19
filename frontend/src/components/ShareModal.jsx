@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import axiosInstance from "../api/axios";
 import { referralLinkFor } from "./ReferralBox";
+import { recordWelcomeShare } from "../api/welcomeShare";
 
 // Share Tap In — share button + modal for every platform + QR scan tag.
 // Tap In never posts to another platform for you and never logs into
@@ -97,6 +98,9 @@ export default function ShareModal({ open, onClose }) {
       await navigator.clipboard.writeText(text);
       setCopied(what);
       setTimeout(() => setCopied(""), 2000);
+      // The link is copied — that is a completed share, so the member
+      // gets their one Welcome to Tap In post (backend dedupes).
+      recordWelcomeShare(link);
     } catch {
       setCopied("copy-failed");
     }
@@ -106,6 +110,9 @@ export default function ShareModal({ open, onClose }) {
     if (typeof navigator !== "undefined" && navigator.share) {
       try {
         await navigator.share({ title: "Tap In", text: SHARE_TEXT, url: link });
+        // Resolved = the member shared it. (A cancelled sheet throws
+        // and never reaches here, so no post is made for it.)
+        recordWelcomeShare(link);
       } catch {
         // User cancelled the system share sheet — nothing to do.
       }
@@ -166,6 +173,7 @@ export default function ShareModal({ open, onClose }) {
               href={o.href}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={() => recordWelcomeShare(link)}
               style={{ ...btn, background: "#2b2d31", color: "white", textDecoration: "none" }}
             >
               {o.label}

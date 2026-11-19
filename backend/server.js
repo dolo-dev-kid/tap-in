@@ -620,6 +620,8 @@ function publicPost(p) {
       mimeType: p.media.mimeType,
       kind: p.media.kind
     } : null,
+    kind: p.kind || "post",
+    link: p.link || "",
     createdAt: p.createdAt
   };
 }
@@ -1346,10 +1348,13 @@ app.delete("/stream/destinations/:platform", requireDb, requireAuth, async (req,
 // --- Feed posts (real user posts only — no sample posts) ---------------
 
 
-// GET /posts — public read, newest first.
+// GET /posts — public read, newest first. ?kind=welcome-share returns
+// only the welcome-share posts (the global Welcome feed on the landing
+// page reads this).
 app.get("/posts", requireDb, async (req, res) => {
   try {
-    const posts = await Post.find({}).sort({ createdAt: -1 }).limit(100);
+    const filter = req.query?.kind === "welcome-share" ? { kind: "welcome-share" } : {};
+    const posts = await Post.find(filter).sort({ createdAt: -1 }).limit(100);
     const names = [...new Set(posts.map((p) => p.username))];
     const users = await User.find({ username: { $in: names } }).select("username verified");
     const verifiedByName = new Map(users.map((u) => [u.username, Boolean(u.verified)]));
@@ -1416,6 +1421,50 @@ app.delete("/posts/:id", requireDb, requireAuth, async (req, res) => {
     }
     await Post.deleteOne({ _id: post._id });
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Welcome-share posts (Wesley, 19 Nov 2026) -----------------------
+// When a member shares Tap In, the app calls this once per completed
+// share and the member gets ONE "Welcome to Tap In" post, which shows
+// in the global Welcome feed on the landing page (GET /posts?kind=
+// welcome-share) and in the in-app Feed like any other post. Dedupe:
+// the first share creates it; later shares return the existing post
+// and create nothing, so the feed never gets spammed with duplicates.
+// Only completed shares call this — a cancelled native share sheet or
+// a failed copy never reaches it. The link must be a Tap In URL (the
+// member's referral link or the plain app link); anything else is
+// rejected. A member can delete their own welcome-share post like any
+// post (DELETE /posts/:id); sharing again after that creates a fresh
+// one. This is in-app Feed/profile only — it never posts anywhere
+// outside Tap In. Feed posts are not run through the chat safety
+// monitor (same as every other Feed post, including Go Live posts);
+// the monitor stays alert-only for chats, flags to Dolo45 only.
+app.post("/share/welcome", requireDb, requireAuth, async (req, res) => {
+  try {
+    const link = typeof req.body?.link === "string" ? req.body.link.trim() : "";
+    const TAP_IN_ORIGIN = "https://tap-in-cakt.onrender.com";
+    if (!link.startsWith(TAP_IN_ORIGIN)) {
+      return res.status(400).json({ error: "Link must be a Tap In link" });
+    }
+    if (link.length > 200) {
+      return res.status(400).json({ error: "Link is too long" });
+    }
+    const existing = await Post.findOne({ userId: req.user._id, kind: "welcome-share" });
+    if (existing) {
+      return res.json({ success: true, created: false, post: publicPost(existing) });
+    }
+    const text = `${req.user.username} shared Tap In — Welcome to Tap In! Join here: ${link}`;
+    const post = await Post.create({
+      userId: req.user._id,
+      username: req.user.username,
+      text,
+      kind: "welcome-share",
+      link
+    });
+    res.json({ success: true, created: true, post: publicPost(post) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

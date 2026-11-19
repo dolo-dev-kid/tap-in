@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import axiosInstance from "../api/axios";
 import MyMerch from "./MyMerch";
+import WelcomeFeed from "./WelcomeFeed";
 import { readRefFromUrl } from "./ReferralBox";
 
 export default function Landing({ authUser = null }) {
@@ -71,6 +72,8 @@ export default function Landing({ authUser = null }) {
       )}
 
       <MyMerch />
+
+      <WelcomeFeed />
 
       <div
         style={{

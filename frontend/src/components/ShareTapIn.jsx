@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { referralLinkFor } from "./ReferralBox";
 import ShareModal from "./ShareModal";
+import { recordWelcomeShare } from "../api/welcomeShare";
 
 // Share Tap In everywhere — copy text only. Tap In never posts to
 // another platform for you and never logs into one: you copy the
@@ -19,6 +20,9 @@ export default function ShareTapIn({ code }) {
       await navigator.clipboard.writeText(text);
       setCopied(what);
       setTimeout(() => setCopied(""), 2000);
+      // The link is copied — that is a completed share, so the member
+      // gets their one Welcome to Tap In post (backend dedupes).
+      recordWelcomeShare(link);
     } catch {
       setCopied("copy-failed");
     }
