@@ -1,12 +1,13 @@
 import { DOLO45_STUDIO_AI_1, DOLO45_STUDIO_AI_2, DOLO45_STUDIO_AI_AVATAR } from "../data/dolo45Photos";
 
 // My Merch — Dolo45's merch showcase.
-// There are NO real merch products, prices or store links yet (checked
-// the whole repo — nothing exists to link to), so nothing is invented
-// here: this is a bold, finished-looking "first drop coming soon" hero.
-// When Wesley has real products, replace the coming-soon copy + button
-// with the real shop link and product cards. Do NOT add a fake price,
-// a fake checkout, or a link to a store that does not exist.
+// The real shop is live at https://dolo45-merch.onrender.com — link to
+// it so members can browse the full drop (33 products plus the RNO 4BUJU
+// hoodie, prices listed). Checkout is NOT live yet — the Printful
+// connection is still being set up — so never write "buy now" or claim
+// anything is buyable here. Browse-only wording only: "Shop the merch",
+// "browse the full collection". Do NOT add a fake price or a fake
+// checkout.
 //
 // Photos are the studio pics Muse created — recording booth,
 // Pittsburgh skyline. Wesley said 16 Nov 2026 he never sent the
@@ -54,11 +55,13 @@ export default function MyMerch() {
             more, stamped Dolo45.
           </p>
           <p style={{ marginTop: 8, fontSize: 15, color: "#ffce54", fontWeight: "bold" }}>
-            🔥 First drop coming soon — stay tapped in. Nothing on sale yet;
-            this is where the shop drops.
+            🔥 Shop the drop — browse the full collection: hoodies, shirts,
+            tanks and jackets, stamped Legendary Legacy.
           </p>
           <a
-            href="#/feed"
+            href="https://dolo45-merch.onrender.com"
+            target="_blank"
+            rel="noopener noreferrer"
             style={{
               display: "inline-block",
               marginTop: 14,
@@ -70,7 +73,7 @@ export default function MyMerch() {
               textDecoration: "none"
             }}
           >
-            Stay tapped in — join the Feed
+            🛍️ Shop the merch
           </a>
         </div>
       </div>
