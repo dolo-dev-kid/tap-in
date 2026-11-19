@@ -2639,10 +2639,17 @@ app.get("/admin/password-resets", requireDb, requireAuth, requireAdmin, async (r
   }
 });
 
-// POST /admin/password-resets/:id/approve — Dolo45 approves: ONLY
-// now is the reset code emailed to the member. If email is not
-// configured, approval is refused (503) and the request stays
-// pending — never approve-and-pretend a code went out.
+// POST /admin/password-resets/:id/approve — Dolo45 approves: the
+// reset code is issued. If email is configured, the code is emailed
+// exactly as before and nothing else changes. If email is NOT
+// configured, the code is still issued (same 6-digit code, hash,
+// 15-minute expiry, attempt limit) and returned in the response —
+// but ONLY to the owner (exact Dolo45): the owner reads it in the
+// Admin panel and shares it with the member himself (e.g. by phone).
+// A non-owner admin can never see a plaintext code: while email is
+// not configured, only the owner may approve. The member is notified
+// either way; the notification never promises an email that was
+// not sent.
 app.post("/admin/password-resets/:id/approve", requireDb, requireAuth, requireAdmin, async (req, res) => {
   try {
     const target = await User.findById(req.params.id);
@@ -2651,13 +2658,18 @@ app.post("/admin/password-resets/:id/approve", requireDb, requireAuth, requireAd
       return res.status(400).json({ error: "That reset request is not pending" });
     }
     if (!target.email) return res.status(400).json({ error: "That account has no email to send a code to" });
-    if (!emailConfigured()) {
-      return res.status(503).json({ error: "Email sending is not set up yet — a reset code cannot be sent until an email service is connected. The request stays pending.", emailConfigured: false });
-    }
     const code = makeSixDigitCode();
-    const sent = await sendEmail(target.email, "Tap In password reset code",
-      `Your Tap In password reset code is ${code}. It expires in 15 minutes. Dolo45 approved this reset. If this wasn't you, ignore this email and tell Dolo45.`);
-    if (!sent.sent) return res.status(503).json({ error: "The reset email could not be sent — please try again later", emailConfigured: true });
+    if (emailConfigured()) {
+      const sent = await sendEmail(target.email, "Tap In password reset code",
+        `Your Tap In password reset code is ${code}. It expires in 15 minutes. Dolo45 approved this reset. If this wasn't you, ignore this email and tell Dolo45.`);
+      if (!sent.sent) return res.status(503).json({ error: "The reset email could not be sent — please try again later", emailConfigured: true });
+    } else if (!isOwnerUsername(req.user.username)) {
+      // No email service: the code cannot be emailed, so it must be
+      // relayed by the owner in person. Other admins cannot approve
+      // in this state — a plaintext code is never shown to anyone
+      // but the owner.
+      return res.status(403).json({ error: "Email is not set up yet — only Dolo45 can approve a reset right now, so he can share the code with the member directly.", emailConfigured: false });
+    }
     target.passwordResetCodeHash = hashCode(code);
     target.passwordResetExpiresAt = new Date(Date.now() + CODE_TTL_MS);
     target.passwordResetAttempts = 0;
@@ -2667,11 +2679,16 @@ app.post("/admin/password-resets/:id/approve", requireDb, requireAuth, requireAd
     await createNotification(target._id, {
       type: "password_reset_approved",
       title: "Your password reset was approved",
-      body: "Dolo45 approved your reset — check your email for the 6-digit code, then reset your password in Tap In.",
+      body: emailConfigured()
+        ? "Dolo45 approved your reset — check your email for the 6-digit code, then reset your password in Tap In."
+        : "Dolo45 approved your reset — he will share the 6-digit code with you directly. It expires in 15 minutes.",
       fromUsername: req.user.username,
       refId: ""
     });
-    res.json({ success: true, message: "Approved — the reset code was emailed to the member." });
+    if (emailConfigured()) {
+      return res.json({ success: true, emailSent: true, message: "Approved — the reset code was emailed to the member." });
+    }
+    return res.json({ success: true, emailSent: false, username: target.username, code, message: "Approved — email is not set up, so share this code with the member yourself. It expires in 15 minutes." });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

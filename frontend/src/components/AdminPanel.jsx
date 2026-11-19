@@ -7,13 +7,22 @@ import AdminProfileView from "./AdminProfileView";
 // Lists every Tap In account so the owner can moderate his own app:
 // promote/demote other users, and ban/unban accounts that break the
 // rules (e.g. creeps targeting kids). No passwords are ever shown here —
-// the backend never sends them. The admin cannot change their own role
-// or ban themselves.
+// the backend never sends them. The one exception is a password-reset
+// code, and only when email is not set up: then the owner (exact
+// "Dolo45") sees the code in this panel so he can share it with the
+// member himself. The backend never returns a code to any other admin.
+// The admin cannot change their own role or ban themselves.
 export default function AdminPanel() {
   const [users, setUsers] = useState([]);
   const [emailConfigured, setEmailConfigured] = useState(null);
   const [resetRequests, setResetRequests] = useState([]);
   const [resetNote, setResetNote] = useState("");
+  // Owner-only relay code: when email is not set up, approving a
+  // reset returns the 6-digit code in the response, and it is shown
+  // here ONLY to the owner (exact "Dolo45") so he can share it with
+  // the member himself. The backend never sends a code to any other
+  // admin, and this box is never rendered for them.
+  const [approvedCode, setApprovedCode] = useState(null);
   const [uploads, setUploads] = useState([]);
   const [flags, setFlags] = useState([]);
   const [chatRooms, setChatRooms] = useState([]);
@@ -66,9 +75,17 @@ export default function AdminPanel() {
   };
   const decideReset = async (id, action) => {
     setResetNote("");
+    setApprovedCode(null);
     try {
       const res = await axiosInstance.post(`/admin/password-resets/${id}/${action}`, {}, { headers: authHeaders() });
       setResetNote(res.data?.message || `${action} done.`);
+      // No-email fallback: the code comes back in the approve
+      // response. Show it only to the owner — the backend only ever
+      // returns it to Dolo45, and this state is never rendered for
+      // other admins.
+      if (action === "approve" && res.data?.code && isOwner) {
+        setApprovedCode({ username: res.data.username || "", code: res.data.code });
+      }
       loadResetRequests();
     } catch (err) {
       setResetNote(err.response?.data?.error || "Could not decide that request.");
@@ -327,10 +344,23 @@ export default function AdminPanel() {
       <h2 style={{ marginTop: 40 }}>🔑 Password reset requests — your approval needed</h2>
       <p style={{ marginTop: 10, color: "#aaa", fontSize: 14 }}>
         A member asks for a reset, you approve or deny it here — no reset code is emailed until you approve.
-        {emailConfigured === false && " Email sending is not set up yet, so approval cannot send a code right now."}
+        {emailConfigured === false && " Email sending is not set up yet, so approving shows the code here for you (the owner) to share with the member yourself — it expires in 15 minutes."}
         {emailConfigured === true && " Email sending is on."}
       </p>
       {resetNote && <p style={{ marginTop: 10, color: "#ffce54", fontSize: 14 }}>{resetNote}</p>}
+      {approvedCode && isOwner && (
+        <div style={{ marginTop: 12, background: "#1e3a1e", border: "2px solid #7CFC9A", padding: 16, borderRadius: 12 }}>
+          <div style={{ fontWeight: "bold", fontSize: 16, color: "#7CFC9A" }}>
+            ✅ Approved for {approvedCode.username} — share this code with the member yourself
+          </div>
+          <div style={{ color: "#fff", fontSize: 14, marginTop: 6 }}>
+            Email is not set up, so no code was emailed. Read this code to {approvedCode.username} — it expires in 15 minutes.
+          </div>
+          <div style={{ fontSize: 36, fontWeight: "bold", letterSpacing: 8, color: "#fff", marginTop: 10, textAlign: "center" }}>
+            {approvedCode.code}
+          </div>
+        </div>
+      )}
       {resetRequests.length === 0 ? (
         <p style={{ marginTop: 16, color: "#aaa" }}>No pending reset requests.</p>
       ) : (
@@ -341,7 +371,7 @@ export default function AdminPanel() {
               <span style={{ color: "#aaa", fontSize: 12, display: "block" }}>Asked {r.requestedAt ? new Date(r.requestedAt).toLocaleString() : "—"}</span>
             </span>
             <span style={{ display: "flex", gap: 8 }}>
-              <button onClick={() => decideReset(r.id, "approve")} style={{ ...btn, background: "#2e7d32", color: "white" }}>Approve — email code</button>
+              <button onClick={() => decideReset(r.id, "approve")} style={{ ...btn, background: "#2e7d32", color: "white" }}>{emailConfigured === false ? "Approve — show me the code" : "Approve — email code"}</button>
               <button onClick={() => decideReset(r.id, "deny")} style={{ ...btn, background: "#b3261e", color: "white" }}>Deny</button>
             </span>
           </div>
