@@ -46,6 +46,7 @@ import StreamDashboard from "./components/StreamDashboard";
 import Overlay from "./components/Overlay";
 import Settings from "./components/Settings";
 import AdminPanel from "./components/AdminPanel";
+import ShareModal from "./components/ShareModal";
 
 // Pages where the LIVE NOW / ONLINE NOW right column belongs.
 const MEMBER_PANEL_PAGES = ["chat", "video", "servers", "dashboard"];
@@ -84,6 +85,7 @@ export default function App() {
     () => typeof window === "undefined" || window.innerWidth > 900
   );
   const [topSearch, setTopSearch] = useState("");
+  const [shareOpen, setShareOpen] = useState(false);
   // Auth state lives HERE, not scattered as localStorage reads in
   // every component. That was the Log in / Sign up bug (Nov 16):
   // the shell read tapin_username once at mount, so after a login
@@ -288,6 +290,14 @@ export default function App() {
           <button type="submit" aria-label="Search">🔍</button>
         </form>
         <div className="tapin-topbar-right">
+          <button
+            className="tapin-panel-toggle"
+            onClick={() => setShareOpen(true)}
+            title="Share Tap In"
+            aria-label="Share Tap In"
+          >
+            📣 Share
+          </button>
           {showRightPanel && (
             <button
               className="tapin-panel-toggle"
@@ -323,6 +333,7 @@ export default function App() {
           )}
         </div>
       </header>
+      <ShareModal open={shareOpen} onClose={() => setShareOpen(false)} />
 
       {/* ── Body: left nav | main | right live/chat column ───── */}
       <div className="tapin-body">

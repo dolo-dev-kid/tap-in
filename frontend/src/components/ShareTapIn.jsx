@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { referralLinkFor } from "./ReferralBox";
+import ShareModal from "./ShareModal";
 
 // Share Tap In everywhere — copy text only. Tap In never posts to
 // another platform for you and never logs into one: you copy the
@@ -7,6 +8,7 @@ import { referralLinkFor } from "./ReferralBox";
 // or wherever yourself. No OAuth, no follower import.
 export default function ShareTapIn({ code }) {
   const [copied, setCopied] = useState("");
+  const [shareOpen, setShareOpen] = useState(false);
   const link = referralLinkFor(code);
   const shareText = code
     ? `Tap In is LIVE — my app, built by me, from the tent to now. 🔥 Members only. Chat, video rooms, live stream, upload your pics, videos and songs, private chats too. It's free for life if you sign up while it's free, before it hits Google Play. Join with my link: ${link} — Dolo45`
@@ -47,7 +49,11 @@ export default function ShareTapIn({ code }) {
         <button onClick={() => copy("text", shareText)} style={{ ...btn, background: "#2b2d31", color: "white" }}>
           {copied === "text" ? "✅ Share text copied!" : "Copy share text"}
         </button>
+        <button onClick={() => setShareOpen(true)} style={{ ...btn, background: "#2b2d31", color: "white" }}>
+          📣 More share options
+        </button>
       </div>
+      <ShareModal open={shareOpen} onClose={() => setShareOpen(false)} />
       {copied === "copy-failed" && (
         <p style={{ marginTop: 10, color: "#ffce54", fontSize: 13 }}>
           Copy didn't work in this browser — long-press the link to copy it.
