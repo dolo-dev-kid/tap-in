@@ -34,7 +34,7 @@ export function socialLinkUrl(platform, value) {
 }
 
 export function hasSocialLinks(links) {
-  return !!links && SOCIAL_PLATFORMS.some((p) => (links[p.key] || "").trim());
+  return !!links && (SOCIAL_PLATFORMS.some((p) => (links[p.key] || "").trim()) || !!(links.booking || "").trim());
 }
 
 // Tappable links to a member's other platforms. Members-only context
@@ -74,6 +74,21 @@ export default function SocialLinksRow({ links, username }) {
           </a>
         );
       })}
+      {/* Book Dolo45 (18 Nov 2026): his music booking page — live
+          shows $500, features $250. Seeded by the backend for the
+          exact username "Dolo45" only, NOT an editable social link,
+          so it renders here alongside his other platforms. */}
+      {links.booking ? (
+        <a
+          href={links.booking}
+          target="_blank"
+          rel="noreferrer"
+          title="Book Dolo45 — live shows $500, features $250"
+          style={{ color: "#00eaff", fontSize: 13, fontWeight: "bold", textDecoration: "none" }}
+        >
+          🎤 Book Dolo45 · Shows $500 / Features $250
+        </a>
+      ) : null}
     </span>
   );
 }

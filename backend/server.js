@@ -251,8 +251,12 @@ function publicSocialLinks(u) {
   // profile / Find Members ONLY — it is never posted publicly
   // anywhere else.
   if (u && u.username === "Dolo45" && !SOCIAL_PLATFORMS.some((k) => out[k])) {
-    return { ...DOLO45_SOCIAL_LINKS };
+    Object.assign(out, DOLO45_SOCIAL_LINKS);
   }
+  // Booking — Dolo45 only (exact username), whether or not he has
+  // saved social links. Wesley, 18 Nov 2026: book him for live shows
+  // ($500) and features ($250) at his booking page.
+  if (u && u.username === "Dolo45") out.booking = DOLO45_BOOKING_URL;
   return out;
 }
 
@@ -268,6 +272,12 @@ const DOLO45_SOCIAL_LINKS = {
   // Tap In profile / Find Members ONLY — never posted publicly.
   discord: "https://discord.gg/w6aX8NDK"
 };
+
+// Dolo45's music booking page (Wesley, 18 Nov 2026): live shows $500,
+// features $250. Shown on his Tap In profile / Find Members ONLY,
+// exact username "Dolo45" only — never for any other member, and
+// never editable as a social link (it is seeded on read, not saved).
+const DOLO45_BOOKING_URL = "https://muse.ai/s/book-dolo45-xlxd6xbxzxcxzxnwcp/XLlEc4Qgl2txoWdAKeys3S61ftrSEEFTLHMVpp8McCI";
 
 // --- Email (verification + admin 2FA + password reset) --------------
 // Tap In had NO email on accounts and NO mail service before this.
