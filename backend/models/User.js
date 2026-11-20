@@ -118,6 +118,17 @@ const UserSchema = new mongoose.Schema({
     trim: true,
     sparse: true
   },
+  // Google sign-in (Wesley, 20 Nov 2026): the Google account's stable
+  // subject ("sub") from the verified ID token, linked to this Tap In
+  // account. No Google ID token is ever stored — only this subject,
+  // which is what lets a later Google sign-in find the same account.
+  // Absent (never "") on accounts that never used Google, so the
+  // sparse unique index never collides on empty values.
+  googleId: {
+    type: String,
+    unique: true,
+    sparse: true
+  },
   // Email verification — via a 6-digit code sent to the email above.
   // verified = the checkmark shown next to the username. No ID
   // documents are ever collected. The owner (exact username Dolo45)

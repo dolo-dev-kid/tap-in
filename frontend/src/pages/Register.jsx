@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import axiosInstance from "../api/axios";
 import { readRefFromUrl } from "../components/ReferralBox";
+import GoogleSignInButton from "../components/GoogleSignInButton";
 
 export default function Register() {
   const [username, setUsername] = useState("");
@@ -39,6 +40,25 @@ export default function Register() {
       .then((res) => setDbDown(res.data?.db !== "connected"))
       .catch(() => setDbDown(false));
   }, []);
+
+  // Google sign-in (Wesley, 20 Nov 2026): a Google signup logs the
+  // new member straight in (same as a password login) — token and
+  // user saved, app shell reloaded. A Google account whose email is
+  // already on an admin account links to that account instead, and
+  // the admin two-factor step lives on the login page, so that case
+  // is sent there with a note.
+  const finishGoogleLogin = (data) => {
+    localStorage.setItem("token", data.token);
+    if (data.user?.username) localStorage.setItem("tapin_username", data.user.username);
+    if (data.user?.id) localStorage.setItem("tapin_user_id", data.user.id);
+    if (data.user?.role) localStorage.setItem("tapin_role", data.user.role);
+    window.dispatchEvent(new Event("tapin:auth-changed"));
+    window.location.href = "#/";
+    window.location.reload();
+  };
+  const handleGoogleTwoFactor = () => {
+    setError("That Google account is linked to an admin — please log in on the login page and enter the admin sign-in code there.");
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -111,6 +131,12 @@ export default function Register() {
             work once the database is up.
           </p>
         )}
+
+        <GoogleSignInButton
+          onSuccess={finishGoogleLogin}
+          onTwoFactor={handleGoogleTwoFactor}
+          referralCode={referralCode.trim() ? referralCode.trim().toUpperCase() : ""}
+        />
 
         <form onSubmit={handleSubmit}>
           <input

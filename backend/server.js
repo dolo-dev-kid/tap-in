@@ -6,6 +6,7 @@ const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
+const { OAuth2Client } = require("google-auth-library");
 const nodemailer = require("nodemailer");
 const multer = require("multer");
 const { GridFSBucket, ObjectId } = require("mongodb");
@@ -103,6 +104,24 @@ function isOwnerUsername(username) {
   // this case-insensitive. The env var is the only source of the
   // owner username; nothing is hardcoded here.
   return Boolean(ADMIN_USERNAME) && username === ADMIN_USERNAME;
+}
+
+// --- Google sign-in (Wesley, 20 Nov 2026) ----------------------------
+// "Continue with Google" on the login + signup screens, via Google
+// Identity Services ID tokens (no client secret needed — the backend
+// only verifies the token). The Client ID comes from the
+// GOOGLE_CLIENT_ID env var (Render backend env). It is NOT invented
+// anywhere: until Wesley creates a Google Cloud OAuth client ID (Web
+// application, authorized JavaScript origin
+// https://tap-in-cakt.onrender.com) and sets it, Google sign-in fails
+// closed with a clear "not configured" error and password login is
+// completely unaffected.
+const GOOGLE_CLIENT_ID = (process.env.GOOGLE_CLIENT_ID || "").trim();
+let googleClient = null;
+function getGoogleClient() {
+  if (!GOOGLE_CLIENT_ID) return null;
+  if (!googleClient) googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
+  return googleClient;
 }
 
 // Verify the JWT from `Authorization: Bearer <token>` and load the user.
@@ -897,6 +916,241 @@ app.post("/auth/login", requireDb, async (req, res) => {
     res.status(500).json({
       error: err.message
     });
+  }
+});
+
+// --- Google sign-in (Wesley, 20 Nov 2026) ----------------------------
+// GET /auth/google/config — public: tells the login/signup screens
+// whether Google sign-in is configured, so the button can render (or
+// explain it isn't set up yet) without a rebuild. The Client ID is
+// public by design (Google requires it in the page); the client
+// SECRET is never used or stored — there is none in this flow.
+app.get("/auth/google/config", (req, res) => {
+  res.json({ configured: Boolean(GOOGLE_CLIENT_ID), clientId: GOOGLE_CLIENT_ID || null });
+});
+
+// POST /auth/google — sign in (or sign up) with a Google ID token.
+// Body: { credential: "<Google ID token JWT>", referralCode?: "<code>" }.
+// The token is verified with google-auth-library against
+// GOOGLE_CLIENT_ID (audience + expiry checked by the library). Only
+// the VERIFIED email/subject from Google's payload are ever used — a
+// client-sent email is never trusted. The Google ID token itself is
+// never stored. Fails closed with 503 when no Client ID is set.
+// Linking is by verified email: an existing account with that email
+// is logged in as that account (so Dolo45 signing in with
+// Robinsonwesley206@gmail.com stays exactly Dolo45, admin intact).
+// Otherwise a new account is created with a unique username derived
+// from the Google name, email verified by Google (skips the 6-digit
+// email-code step), the referral code honoured if one was supplied,
+// and the normal new-member defaults. Banned accounts can never log
+// in this way, and a Google signup can never create an admin or the
+// owner username.
+app.post("/auth/google", async (req, res) => {
+  try {
+    const client = getGoogleClient();
+    if (!client) {
+      return res.status(503).json({ error: "Google sign-in is not set up yet — Dolo45 needs to add the Google client ID on the backend first. You can still log in with your password." });
+    }
+    const credential = typeof req.body?.credential === "string" ? req.body.credential : "";
+    if (!credential) return res.status(400).json({ error: "Google sign-in didn't return a credential — try again." });
+
+    let payload;
+    try {
+      const ticket = await client.verifyIdToken({ idToken: credential, audience: GOOGLE_CLIENT_ID });
+      payload = ticket.getPayload();
+    } catch (err) {
+      return res.status(401).json({ error: "That Google sign-in couldn't be verified — try again." });
+    }
+    if (!payload || !payload.email || !payload.email_verified || !payload.sub) {
+      return res.status(401).json({ error: "Google didn't confirm a verified email for this account — try another Google account." });
+    }
+    const googleEmail = String(payload.email).toLowerCase();
+    const googleSub = String(payload.sub);
+
+    if (!dbConnected) {
+      return res.status(503).json({ error: "Tap In's database is still being connected — logins and sign-ups will work once it is up. Please try again soon." });
+    }
+
+    // Link by Google subject first, then by verified email.
+    let user = await User.findOne({ googleId: googleSub });
+    if (!user) user = await User.findOne({ email: googleEmail });
+    if (user && user.banned) {
+      return res.status(403).json({ error: "This account has been banned" });
+    }
+
+    if (user) {
+      // Existing account: link the Google subject (so next time the
+      // subject lookup hits first) and mark the email verified —
+      // Google already proved they own it.
+      let changed = false;
+      if (user.googleId !== googleSub) { user.googleId = googleSub; changed = true; }
+      if (!user.emailVerified || !user.verified) {
+        user.emailVerified = true;
+        user.verified = true;
+        if (user.verificationStatus === "none") user.verificationStatus = "approved";
+        changed = true;
+      }
+      if (changed) await user.save();
+    } else {
+      // New account: derive a unique username from the Google name
+      // (or the email's local part). Never "Dolo45" in any case —
+      // that name (and the admin role) can only come from the
+      // existing owner account, never from a Google signup.
+      const referralCode = typeof (req.body?.referralCode || req.body?.ref) === "string"
+        ? String(req.body.referralCode || req.body.ref).trim()
+        : "";
+      let referrer = null;
+      if (referralCode) {
+        referrer = await findReferrerByCode(referralCode);
+        if (!referrer || referrer.banned) {
+          return res.status(400).json({ error: "That referral code doesn't belong to anyone — check the code, or sign up without one." });
+        }
+      }
+      const base = String(payload.name || googleEmail.split("@")[0] || "member")
+        .replace(/[^A-Za-z0-9_]/g, "")
+        .slice(0, 20) || "member";
+      let username = base;
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const candidate = attempt === 0 ? base : `${base}${attempt + 1}`;
+        if (sameUsername(candidate, ADMIN_USERNAME || "Dolo45")) continue;
+        if (!(await usernameTaken(User, candidate))) { username = candidate; break; }
+        username = candidate;
+      }
+      if (await usernameTaken(User, username) || sameUsername(username, ADMIN_USERNAME || "Dolo45")) {
+        return res.status(500).json({ error: "Couldn't pick a username for this Google account — try signing up with a username and password instead." });
+      }
+      // A password is required by the schema but a Google-only
+      // account never uses it: store a random hash nobody knows.
+      // The member can set a real password later via forgot-password
+      // (their email is verified, so the reset flow works).
+      const randomPassword = crypto.randomBytes(32).toString("hex");
+      const hashedPassword = await bcrypt.hash(randomPassword, 10);
+      user = await User.create({
+        username,
+        password: hashedPassword,
+        email: googleEmail,
+        googleId: googleSub,
+        role: "user",
+        emailVerified: true,
+        verified: true,
+        verificationStatus: "approved",
+        referredBy: referrer ? referrer.username : ""
+      });
+      let myCode = null;
+      try { myCode = await ensureReferralCode(user); } catch (err) { /* signup already succeeded */ }
+      if (referrer) {
+        try {
+          const freshReferrer = await User.findById(referrer._id);
+          if (freshReferrer && !freshReferrer.banned) {
+            removeFriendRequest(freshReferrer, user.username);
+            removeFriendRequest(user, freshReferrer.username);
+            addFriendBothWays(freshReferrer, user);
+            await freshReferrer.save();
+            await user.save();
+            await createNotification(freshReferrer._id, {
+              type: "member_joined",
+              title: "Someone joined with your referral code",
+              body: `${username} signed up with your referral code — you're friends now.`,
+              fromUsername: username,
+              refId: username
+            });
+          }
+        } catch (err) { /* referral friending must never break signup */ }
+      }
+      try {
+        const admins = await User.find({ role: "admin" }).select("_id");
+        for (const admin of admins) {
+          if (String(admin._id) === String(user._id)) continue;
+          await createNotification(admin._id, {
+            type: "member_joined",
+            title: "New member joined Tap In",
+            body: `${username} just joined Tap In.`,
+            fromUsername: username,
+            refId: username
+          });
+        }
+      } catch (err) { /* signup already succeeded */ }
+    }
+
+    // Owner account created before ADMIN_USERNAME was set still
+    // becomes admin on login when the env var matches exactly.
+    if (isOwnerUsername(user.username) && user.role !== "admin") {
+      user.role = "admin";
+      await user.save();
+    }
+    if (isOwnerUsername(user.username) && !user.verified) {
+      user.verified = true;
+      user.verificationStatus = "approved";
+      await user.save();
+    }
+
+    // Admin two-factor (same rule as password login): admins must
+    // enter a one-time code emailed to their verified email AFTER
+    // signing in, before they get a full token. If email sending is
+    // NOT configured, 2FA cannot run — the admin logs in normally
+    // (twoFactorVerified=false) and the frontend shows "2FA not
+    // active yet". Google's own verification is the sign-in here;
+    // the emailed code is the second factor, exactly as with a
+    // password login.
+    if (user.role === "admin") {
+      if (emailConfigured() && user.emailVerified && user.email) {
+        const code = makeSixDigitCode();
+        const sent = await sendEmail(user.email, "Tap In admin sign-in code",
+          `Your Tap In admin sign-in code is ${code}. It expires in 15 minutes. If this wasn't you, change your password and tell Dolo45.`);
+        if (sent.sent) {
+          user.twoFactorCodeHash = hashCode(code);
+          user.twoFactorCodeExpiresAt = new Date(Date.now() + CODE_TTL_MS);
+          user.twoFactorCodeAttempts = 0;
+          user.twoFactorCodeSentAt = new Date();
+          await user.save();
+          const tempToken = jwt.sign({ id: user._id, username: user.username, role: user.role, purpose: "2fa" }, jwtSecret, { expiresIn: "10m" });
+          return res.json({ success: false, twoFactorRequired: true, emailConfigured: true, maskedEmail: maskEmail(user.email), tempToken });
+        }
+        console.warn("Admin 2FA code could not be sent — email send failed; admin login continues without 2FA this time.");
+      } else if (emailConfigured()) {
+        const tempToken = jwt.sign({ id: user._id, username: user.username, role: user.role, purpose: "2fa" }, jwtSecret, { expiresIn: "10m" });
+        return res.json({ success: false, twoFactorRequired: true, needsEmail: true, emailConfigured: true, tempToken });
+      }
+    }
+
+    // Backfill: accounts created before referral codes get theirs
+    // on login, so every existing member has a code to share.
+    let myCode = user.referralCode || null;
+    try { myCode = (await ensureReferralCode(user)) || myCode; } catch (err) { /* login already succeeded */ }
+
+    const token = jwt.sign(
+      {
+        id: user._id,
+        username: user.username,
+        role: user.role,
+        purpose: "full",
+        tokenVersion: user.tokenVersion || 0,
+        twoFactorVerified: user.role !== "admin" || !emailConfigured()
+      },
+      jwtSecret,
+      { expiresIn: "30d" }
+    );
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user._id,
+        username: user.username,
+        bio: user.bio,
+        avatar: user.avatar,
+        referralCode: myCode,
+        referredBy: user.referredBy || "",
+        profileSong: user.profileSong && user.profileSong.url ? user.profileSong : null,
+        role: user.role,
+        banned: Boolean(user.banned),
+        verified: Boolean(user.verified),
+        emailConfigured: emailConfigured(),
+        twoFactorPending: user.role === "admin" && !emailConfigured()
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

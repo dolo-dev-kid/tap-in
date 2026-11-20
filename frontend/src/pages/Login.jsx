@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import axiosInstance from "../api/axios";
+import GoogleSignInButton from "../components/GoogleSignInButton";
 
 const inputStyle = {
   width: "100%", padding: 12, marginBottom: 15, borderRadius: 8,
@@ -94,6 +95,19 @@ export default function Login() {
     } finally { setLoading(false); }
   };
 
+  // Google sign-in (Wesley, 20 Nov 2026): a Google login for an
+  // admin account follows the same two-factor step as a password
+  // login — the code is emailed after Google verifies them.
+  const handleGoogleTwoFactor = (data) => {
+    setTempToken(data.tempToken || "");
+    setMaskedEmail(data.maskedEmail || "");
+    setNeedsEmail(Boolean(data.needsEmail));
+    setStep("2fa");
+    setInfo(data.needsEmail
+      ? "Admin sign-in needs a verified email first — add yours below and we'll send a verification code."
+      : `Admin sign-in: a code was emailed to ${data.maskedEmail || "your email"}. Enter it below.`);
+  };
+
   const submitSetupEmail = async (e) => {
     e.preventDefault();
     setLoading(true); setSetupNote("");
@@ -144,11 +158,14 @@ export default function Login() {
         {error && <p style={{ color: "#ff6b6b", marginBottom: 15 }}>{error}</p>}
 
         {step === "login" && (
-          <form onSubmit={handleSubmit}>
-            <input type="text" placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} style={inputStyle} />
-            <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} />
-            <button type="submit" disabled={loading} style={{ ...btnStyle, opacity: loading ? 0.6 : 1 }}>{loading ? "Logging in..." : "Login"}</button>
-          </form>
+          <>
+            <GoogleSignInButton onSuccess={finishLogin} onTwoFactor={handleGoogleTwoFactor} />
+            <form onSubmit={handleSubmit}>
+              <input type="text" placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} style={inputStyle} />
+              <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} />
+              <button type="submit" disabled={loading} style={{ ...btnStyle, opacity: loading ? 0.6 : 1 }}>{loading ? "Logging in..." : "Login"}</button>
+            </form>
+          </>
         )}
 
         {step === "2fa" && (
