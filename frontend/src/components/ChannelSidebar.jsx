@@ -6,6 +6,7 @@
 const TEXT_CHANNELS = [
   { id: "landing", icon: "#", label: "home" },
   { id: "feed", icon: "#", label: "feed" },
+  { id: "news", icon: "📰", label: "dolo45-news" },
   { id: "chat", icon: "#", label: "chat" },
   { id: "friends", icon: "#", label: "friends" },
   { id: "notifications", icon: "#", label: "alerts" },

@@ -47,6 +47,7 @@ import Overlay from "./components/Overlay";
 import Settings from "./components/Settings";
 import AdminPanel from "./components/AdminPanel";
 import ShareModal from "./components/ShareModal";
+import Dolo45News from "./components/Dolo45News";
 
 // Pages where the LIVE NOW / ONLINE NOW right column belongs.
 const MEMBER_PANEL_PAGES = ["chat", "video", "servers", "dashboard"];
@@ -59,6 +60,7 @@ const PAGE_TITLES = {
   profile: "Profile",
   friends: "Friends",
   notifications: "Alerts",
+  news: "Dolo45 News",
   servers: "Servers",
   dashboard: "Stream Dashboard",
   overlay: "Overlay",
@@ -273,6 +275,7 @@ export default function App() {
         </button>
         <nav className="tapin-topnav" aria-label="Main">
           {topNavBtn("feed", "Browse")}
+          {topNavBtn("news", "📰 News")}
           {topNavBtn("dashboard", "🔴 Live")}
           {topNavBtn("chat", "Chat")}
           {topNavBtn("friends", "Friends", friendRequestCount)}
@@ -370,8 +373,9 @@ export default function App() {
               </button>
             )}
           </div>
-          {page === "landing" && <Landing authUser={authUser} />}
+          {page === "landing" && <Landing authUser={authUser} onNavigate={navigate} />}
           {page === "feed" && <Feed />}
+          {page === "news" && <Dolo45News />}
           {page === "video" && <VideoChat initialRoom={liveRoom} />}
           {page === "chat" && <ChatPanel />}
           {page === "profile" && <Profile />}

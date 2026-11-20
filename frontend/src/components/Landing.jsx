@@ -4,7 +4,7 @@ import MyMerch from "./MyMerch";
 import WelcomeFeed from "./WelcomeFeed";
 import { readRefFromUrl } from "./ReferralBox";
 
-export default function Landing({ authUser = null }) {
+export default function Landing({ authUser = null, onNavigate = null }) {
   const [health, setHealth] = useState(null);
   const [invitedBy, setInvitedBy] = useState("");
   const [inviteCode, setInviteCode] = useState("");
@@ -74,6 +74,43 @@ export default function Landing({ authUser = null }) {
       <MyMerch />
 
       <WelcomeFeed />
+
+      <div
+        style={{
+          marginTop: 24,
+          background: "#1e1f22",
+          border: "1px solid #00eaff",
+          borderRadius: 12,
+          padding: 20,
+          maxWidth: 920
+        }}
+      >
+        <div style={{ fontSize: 22, fontWeight: "bold" }}>📰 Dolo45 News</div>
+        <p style={{ marginTop: 8, color: "#aaa", fontSize: 14 }}>
+          The hub for all things Dolo45 — Tap In, 412 Shape Ups, Grim
+          Wizzard, Union Money Films, merch, bookings, music and more.
+          Latest: the community giveaway is TODAY at 2:00 PM at Turner
+          Elementary.
+        </p>
+        {onNavigate && (
+          <button
+            onClick={() => onNavigate("news")}
+            style={{
+              marginTop: 12,
+              padding: "12px 24px",
+              borderRadius: 10,
+              background: "#00eaff",
+              color: "black",
+              fontWeight: "bold",
+              border: "none",
+              cursor: "pointer",
+              fontSize: 16
+            }}
+          >
+            See all Dolo45 news →
+          </button>
+        )}
+      </div>
 
       <div
         style={{
