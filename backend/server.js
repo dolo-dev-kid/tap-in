@@ -654,6 +654,13 @@ app.get("/health", (req, res) => {
   res.json({ ok: true, db: dbConnected ? "connected" : "disconnected", uptime: process.uptime() });
 });
 
+// Live news for the Dolo45 News hub (24 Nov 2026) — Google News RSS
+// for hip hop + fashion, Facebook Graph mentions when FB_PAGE_TOKEN
+// is set. Public on purpose: the News hub is readable from the
+// landing page, and the feed needs no database.
+const { getNews } = require("./news");
+app.get("/api/news", getNews);
+
 app.post("/auth/register", requireDb, async (req, res) => {
   try {
     // Trim the username at signup: an untrimmed name (e.g. a trailing

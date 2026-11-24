@@ -33,7 +33,7 @@ const WORKS = [
     emoji: "🎬",
     title: "Union Money Films",
     blurb: "Nelse Dumas Jr's streaming app, built by Dolo45 — stream the full movies: Seeing Things, Unsung Birds, Trepidation, Phantasmagoria and more.",
-    link: "https://muse.ai/s/union-money-films-ep6xh1xnfcxuao/CQRl9ianYqstkUXtHqoWPrKqg2tGdq2TsaKY7d6yr_g",
+    link: "https://union-money-films.onrender.com",
     linkLabel: "Stream the movies →",
   },
   {
@@ -79,6 +79,20 @@ const WORKS = [
     ],
   },
   {
+    emoji: "🎮",
+    title: "Dolo45 Kids",
+    blurb: "Five games for MyMy, Talia, Nadia and Kaela — Memory Match, counting, Color the Wizard, Catch the Stars, shape & color quiz. No login, no ads.",
+    link: "https://dolo45-kids-games.onrender.com",
+    linkLabel: "Play the games →",
+  },
+  {
+    emoji: "🛡️",
+    title: "Dolo45 Security",
+    blurb: "Free safety toolkit — check a file, check a link, test a password, check your device. Real checks, no fake scan results.",
+    link: "https://dolo45-security.onrender.com",
+    linkLabel: "Check your security →",
+  },
+  {
     emoji: "💛",
     title: "Support Dolo45",
     blurb: "Help an independent artist keep making music — music, Tap In, merch, all of it. Donate if you can, share if you can't.",
@@ -87,47 +101,77 @@ const WORKS = [
   },
 ];
 
-// Real news only, true as of 20 Nov 2026. When an item stops being
-// current, remove it or replace it with the next real update — never
-// leave stale news up and never invent a new item.
-const NEWS = [
-  {
-    date: "Fri Nov 20, 2026 — TODAY",
-    tag: "Community",
-    title: "Community giveaway today — 2:00 PM, Turner Elementary",
-    text: "Bookbag + turkey giveaway, today at 2:00 PM sharp at Turner Elementary School, Laketon Rd, Wilkinsburg, PA.",
-  },
-  {
-    date: "Nov 2026",
-    tag: "All live",
-    title: "All six apps are live",
-    text: "Tap In, 412 Shape Ups, Grim Wizzard, Union Money Films, Dolo45 Merch and Book Nelse D — all live right now, all linked on this page.",
-  },
-  {
-    date: "Nov 2026",
-    tag: "Merch",
-    title: "The 4BUJU hoodie is buyable now",
-    text: "The first real RNO hoodie — black + gold, Legendary Legacy — is on sale on the merch Quick Store. The rest of the store is listed and coming.",
-  },
-  {
-    date: "Mon Nov 23, 2026",
-    tag: "Career",
-    title: "Per Scholas application deadline — Monday",
-    text: "Cybersecurity with AI Tools, free, starts Dec 7, 2026. Applications close Monday Nov 23.",
-  },
-  {
-    date: "Jan 18, 2027",
-    tag: "Music",
-    title: "ETSU contest entry deadline",
-    text: "\"From the Archives to the Mic\" — a new 2–5 minute song on one of the four ETSU beats, plus lyrics and a short statement. Free to enter.",
-  },
-  {
-    date: "Nov 2026",
-    tag: "Tap In",
-    title: "Google sign-in is coming to Tap In",
-    text: "Sign in with Google is built and deployed — it goes live once the Google OAuth client ID is set on the backend.",
-  },
-];
+// Live news — fetched from the backend (GET /api/news), which pulls
+// real feeds: Google News for hip hop + fashion, and Dolo45's
+// Facebook Page mentions when the Page is connected. Nothing here is
+// hardcoded anymore, so nothing can go stale.
+import { useEffect, useState } from "react";
+import api from "../api/axios";
+
+function formatDate(d) {
+  if (!d) return "";
+  const date = new Date(d);
+  if (isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function NewsSection({ title, tag, items, emptyText }) {
+  return (
+    <div style={{ marginTop: 28 }}>
+      <h3 style={{ fontSize: 21, margin: 0 }}>{title}</h3>
+      <div style={{ marginTop: 12 }}>
+        {items.length === 0 && (
+          <p style={{ color: "#aaa", fontSize: 15 }}>{emptyText}</p>
+        )}
+        {items.map((n) => (
+          <div
+            key={n.url + n.title}
+            style={{
+              background: "#1e1f22",
+              border: "1px solid #2b2d31",
+              borderLeft: "4px solid #00eaff",
+              borderRadius: 10,
+              padding: 16,
+              marginTop: 12,
+            }}
+          >
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+              <span
+                style={{
+                  background: "#00eaff",
+                  color: "#000",
+                  fontSize: 12,
+                  fontWeight: "bold",
+                  borderRadius: 6,
+                  padding: "3px 8px",
+                }}
+              >
+                {tag}
+              </span>
+              <span style={{ color: "#aaa", fontSize: 13 }}>
+                {n.source}
+                {n.date ? ` — ${formatDate(n.date)}` : ""}
+              </span>
+            </div>
+            <div style={{ fontSize: 18, fontWeight: "bold", marginTop: 8 }}>
+              <a
+                href={n.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: "white", textDecoration: "none" }}
+              >
+                {n.title} →
+              </a>
+            </div>
+            {n.text ? (
+              <p style={{ marginTop: 6, color: "#d3d3d8", fontSize: 15 }}>{n.text}</p>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 const cardStyle = {
   background: "#1e1f22",
@@ -139,6 +183,28 @@ const cardStyle = {
 };
 
 export default function Dolo45News() {
+  const [feed, setFeed] = useState(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .get("/api/news")
+      .then((res) => {
+        if (alive) setFeed(res.data);
+      })
+      .catch(() => {
+        if (alive) setFailed(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const facebook = feed?.facebook || { configured: false, items: [] };
+  const hiphop = feed?.hiphop?.items || [];
+  const fashion = feed?.fashion?.items || [];
+
   return (
     <div style={{ padding: 24, color: "white", maxWidth: 1100 }}>
       <h2 style={{ fontSize: 28, margin: 0 }}>📰 Dolo45 News</h2>
@@ -194,42 +260,55 @@ export default function Dolo45News() {
         ))}
       </div>
 
-      <h3 style={{ marginTop: 36, fontSize: 21 }}>Latest news</h3>
-      <div style={{ marginTop: 12 }}>
-        {NEWS.map((n) => (
-          <div
-            key={n.title}
-            style={{
-              background: "#1e1f22",
-              border: "1px solid #2b2d31",
-              borderLeft: "4px solid #00eaff",
-              borderRadius: 10,
-              padding: 16,
-              marginTop: 12,
-            }}
-          >
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-              <span
-                style={{
-                  background: "#00eaff",
-                  color: "#000",
-                  fontSize: 12,
-                  fontWeight: "bold",
-                  borderRadius: 6,
-                  padding: "3px 8px",
-                }}
-              >
-                {n.tag}
-              </span>
-              <span style={{ color: "#aaa", fontSize: 13 }}>{n.date}</span>
+      <h3 style={{ marginTop: 36, fontSize: 21 }}>Live news</h3>
+      <p style={{ marginTop: 6, fontSize: 14, color: "#aaa" }}>
+        Fresh from the web right now
+        {feed?.updatedAt ? ` — updated ${formatDate(feed.updatedAt)}` : ""}
+        {failed ? " — couldn't reach the feed, showing what's here instead." : ""}
+      </p>
+      {feed === null && !failed && (
+        <p style={{ color: "#aaa", fontSize: 15 }}>Loading the latest news…</p>
+      )}
+      {feed !== null && (
+        <>
+          {facebook.configured ? (
+            <NewsSection
+              title="📘 Facebook — mentions of Dolo45"
+              tag="Facebook"
+              items={facebook.items}
+              emptyText="No new mentions right now — check back soon."
+            />
+          ) : (
+            <div style={{ marginTop: 28 }}>
+              <h3 style={{ fontSize: 21, margin: 0 }}>📘 Facebook — mentions of Dolo45</h3>
+              <p style={{ color: "#aaa", fontSize: 15, marginTop: 8 }}>
+                Facebook mentions light up here once the Dolo45 Page is
+                connected — until then, catch them on the{" "}
+                <a
+                  href="https://www.facebook.com/1Dolo45"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: "#00eaff", fontWeight: "bold" }}
+                >
+                  Dolo45 Page →
+                </a>
+              </p>
             </div>
-            <div style={{ fontSize: 18, fontWeight: "bold", marginTop: 8 }}>
-              {n.title}
-            </div>
-            <p style={{ marginTop: 6, color: "#d3d3d8", fontSize: 15 }}>{n.text}</p>
-          </div>
-        ))}
-      </div>
+          )}
+          <NewsSection
+            title="🎤 Pittsburgh hip hop"
+            tag="Hip hop"
+            items={hiphop}
+            emptyText="No hip hop news loaded right now — try again in a bit."
+          />
+          <NewsSection
+            title="👕 Hip hop fashion"
+            tag="Fashion"
+            items={fashion}
+            emptyText="No fashion news loaded right now — try again in a bit."
+          />
+        </>
+      )}
     </div>
   );
 }
