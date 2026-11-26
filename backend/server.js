@@ -29,7 +29,7 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 // CORS: only Tap In's own origins, never a wildcard. The live frontend
 // is https://tap-in-cakt.onrender.com; local dev is :5173; the Play
 // app talks over capacitor://localhost.
-const ALLOWED_ORIGINS = [FRONTEND_URL, "http://localhost:5173", "capacitor://localhost", "https://tap-in-cakt.onrender.com"];
+const ALLOWED_ORIGINS = [FRONTEND_URL, "http://localhost:5173", "capacitor://localhost", "https://tap-in-cakt.onrender.com", "https://bangas-only.onrender.com", "https://dolo45-merch.onrender.com"];
 app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
 app.use(express.json());
 
@@ -151,6 +151,11 @@ async function requireAuth(req, res, next) {
     return res.status(401).json({ error: "Invalid or expired login" });
   }
 }
+
+// Trifecta full sync: Tap In is the identity provider for Bangas-Only
+// and Dolo45 Merch (see backend/trifecta.js).
+const { registerTrifecta } = require("./trifecta");
+registerTrifecta(app, { requireAuth, requireDb });
 
 // Admin only: must be logged in AND have role "admin".
 // Admin 2FA: once email sending is configured, an admin token must

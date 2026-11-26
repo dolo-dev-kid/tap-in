@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import axiosInstance from "../api/axios";
 import GoogleSignInButton from "../components/GoogleSignInButton";
+import { validConnectReturn } from "./Connect";
 
 const inputStyle = {
   width: "100%", padding: 12, marginBottom: 15, borderRadius: 8,
@@ -51,7 +52,18 @@ export default function Login() {
     // left Log in / Sign up on screen after logging in. The reload
     // guarantees the shell mounts with the new auth state.
     window.dispatchEvent(new Event("tapin:auth-changed"));
-    window.location.href = "#/";
+    // Trifecta /connect return: a sign-in that started from the
+    // authorize page goes back to /connect with the same params
+    // instead of home. validConnectReturn only ever honours a
+    // /connect URL for a whitelisted app — anything else falls back
+    // to "#/" below.
+    let dest = "#/";
+    try {
+      const ret = sessionStorage.getItem("tapin_connect_return") || "";
+      sessionStorage.removeItem("tapin_connect_return");
+      dest = validConnectReturn(ret) || "#/";
+    } catch (e) { /* storage unavailable */ }
+    window.location.href = dest;
     window.location.reload();
   };
 
